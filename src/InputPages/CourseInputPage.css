@@ -1,0 +1,127 @@
+.course-input-page {
+  min-height: 100%;
+  padding: 1px 0 48px;
+  background-color: #f3f2eb;
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 31px,
+    rgb(44 62 52 / 3%) 32px
+  );
+  color: #24352f;
+  text-align: left;
+}
+
+.course-input-content {
+  width: min(720px, calc(100% - 40px));
+  margin: clamp(56px, 12vh, 112px) auto 0;
+}
+
+.course-input-eyebrow {
+  margin: 0 0 12px;
+  color: #b15e48;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+}
+
+.course-input-content h1 {
+  margin: 0 0 32px;
+  color: #24352f;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: clamp(32px, 5vw, 48px);
+  font-weight: 400;
+  line-height: 1.1;
+}
+
+.course-input-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  padding: 24px;
+  border: 1px solid #d9dbd1;
+  background: #fffefa;
+  box-shadow: 0 14px 40px rgb(46 57 47 / 7%);
+}
+
+.course-input-panel label {
+  grid-column: 1 / -1;
+  display: block;
+  margin-bottom: -2px;
+  color: #46564c;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.course-input-panel input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 13px;
+  border: 1px solid #d9dbd1;
+  border-radius: 2px;
+  background: #fffefa;
+  color: #293a31;
+  font: inherit;
+  font-size: 15px;
+}
+
+.course-input-panel button {
+  min-height: 48px;
+  padding: 0 20px;
+  border: 1px solid #355a48;
+  background: #355a48;
+  color: #fffefa;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.course-input-panel button:hover:not(:disabled) {
+  background: #294b39;
+}
+
+.course-input-panel button:focus-visible,
+.course-input-panel input:focus-visible {
+  outline: 2px solid #517b62;
+  outline-offset: 2px;
+}
+
+.course-input-panel button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.course-input-status {
+  grid-column: 1 / -1;
+  min-height: 18px;
+  margin: 0;
+  color: #647469;
+  font-size: 12px;
+}
+
+.course-input-panel input::placeholder {
+  color: #a6aaa1;
+}
+
+@media (max-width: 620px) {
+  .course-input-content {
+    width: calc(100% - 28px);
+    margin-top: 56px;
+  }
+
+  .course-input-panel {
+    padding: 18px;
+  }
+}
+
+@media (max-width: 420px) {
+  .course-input-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .course-input-panel label,
+  .course-input-status {
+    grid-column: 1;
+  }
+}

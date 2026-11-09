@@ -1,0 +1,323 @@
+.app-shell {
+  min-height: 100svh;
+  display: flex;
+  background: #f3f2eb;
+}
+
+.app-content {
+  min-width: 0;
+  min-height: 100svh;
+  flex: 1;
+  background: #f3f2eb;
+}
+
+.welcome-page {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  color: #24352f;
+}
+
+.welcome-page h1 {
+  margin: 0;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 48px;
+  font-weight: 400;
+}
+
+.app-shell.is-dark,
+.app-shell.is-dark .app-content {
+  background: #18211c;
+  color: #e8eee8;
+}
+
+.app-shell.is-dark .welcome-page {
+  color: #edf2eb;
+}
+
+.app-shell.is-dark .navigation-sidebar {
+  background: #151f19;
+}
+
+.app-shell.is-dark .navigation-item:hover,
+.app-shell.is-dark .navigation-item.is-active,
+.app-shell.is-dark .theme-toggle:hover {
+  background: #2b4034;
+}
+
+.app-shell.is-dark .icon-home::before {
+  background: #151f19;
+}
+
+.app-shell.is-dark .teacher-profile-page,
+.app-shell.is-dark .login-page {
+  background-color: #1b251f;
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 31px,
+    rgb(255 255 255 / 3%) 32px
+  );
+  color: #e8eee8;
+}
+
+.app-shell.is-dark .course-input-page,
+.app-shell.is-dark .course-list-page {
+  background-color: #1b251f;
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 31px,
+    rgb(255 255 255 / 3%) 32px
+  );
+  color: #e8eee8;
+}
+
+.app-shell.is-dark .course-input-content h1,
+.app-shell.is-dark .teacher-profile-content h1 {
+  color: #edf2eb;
+}
+
+.app-shell.is-dark .teacher-profile-back {
+  color: #d4dfd5;
+}
+
+.app-shell.is-dark .teacher-profile-back::before {
+  color: #e29a76;
+}
+
+.app-shell.is-dark .course-input-eyebrow,
+.app-shell.is-dark .teacher-profile-eyebrow {
+  color: #e29a76;
+}
+
+.app-shell.is-dark .course-input-panel,
+.app-shell.is-dark .teacher-profile-form {
+  border-color: #3a4a40;
+  background: #222e27;
+  box-shadow: 0 14px 40px rgb(0 0 0 / 18%);
+}
+
+.app-shell.is-dark .course-input-panel label,
+.app-shell.is-dark .teacher-field label,
+.app-shell.is-dark .teacher-availability legend {
+  color: #d4dfd5;
+}
+
+.app-shell.is-dark .course-input-panel input,
+.app-shell.is-dark .teacher-field input,
+.app-shell.is-dark .teacher-field select,
+.app-shell.is-dark .teacher-field textarea {
+  border-color: #46564b;
+  background: #19241e;
+  color: #edf2eb;
+}
+
+.app-shell.is-dark .teacher-field input:disabled,
+.app-shell.is-dark .teacher-field select:disabled,
+.app-shell.is-dark .teacher-field textarea:disabled {
+  background: #2a352e;
+  color: #c2cec4;
+}
+
+.app-shell.is-dark .course-input-panel input::placeholder,
+.app-shell.is-dark .teacher-field textarea::placeholder {
+  color: #9daaa0;
+}
+
+.app-shell.is-dark .course-input-status,
+.app-shell.is-dark .teacher-profile-status,
+.app-shell.is-dark .teacher-profile-intro {
+  color: #b6c3b9;
+}
+
+.app-shell.is-dark .teacher-day span {
+  border-color: #46564b;
+  color: #d4dfd5;
+}
+
+.app-shell.is-dark .teacher-day input:checked + span {
+  border-color: #789b7e;
+  background: #34493a;
+  color: #f0f3ec;
+}
+
+.app-shell.is-dark .login-card {
+  border-color: #3a4a40;
+  background: #222e27;
+  box-shadow: 0 20px 60px rgb(0 0 0 / 24%);
+}
+
+.app-shell.is-dark .login-card h1 {
+  color: #edf2eb;
+}
+
+.app-shell.is-dark .login-copy,
+.app-shell.is-dark .login-note {
+  color: #b6c3b9;
+}
+
+.app-shell.is-dark .login-field label {
+  color: #d4dfd5;
+}
+
+.app-shell.is-dark .login-field input {
+  border-color: #46564b;
+  background: #19241e;
+  color: #edf2eb;
+}
+
+.app-shell.is-dark .login-field input::placeholder {
+  color: #9daaa0;
+}
+
+.app-shell.is-dark .login-status {
+  color: #e7bf9c;
+}
+
+.app-shell.is-dark .registration-page {
+  background-color: #1b251f;
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 31px,
+    rgb(255 255 255 / 3%) 32px
+  );
+  color: #e8eee8;
+}
+
+.app-shell.is-dark .registration-card {
+  border-color: #3a4a40;
+  background: #222e27;
+  box-shadow: 0 20px 60px rgb(0 0 0 / 24%);
+}
+
+.app-shell.is-dark .registration-card h1 {
+  color: #edf2eb;
+}
+
+.app-shell.is-dark .registration-copy,
+.app-shell.is-dark .registration-note,
+.app-shell.is-dark .registration-current-role {
+  color: #b6c3b9;
+}
+
+.app-shell.is-dark .registration-field label,
+.app-shell.is-dark .registration-role strong {
+  color: #d4dfd5;
+}
+
+.app-shell.is-dark .registration-field input {
+  border-color: #46564b;
+  background: #19241e;
+  color: #edf2eb;
+}
+
+.app-shell.is-dark .registration-field input::placeholder {
+  color: #9daaa0;
+}
+
+.app-shell.is-dark .registration-role {
+  border-color: #46564b;
+  background: #19241e;
+}
+
+.app-shell.is-dark .registration-role small {
+  color: #a9b8ad;
+}
+
+.app-shell.is-dark .registration-status {
+  color: #e7bf9c;
+}
+
+.app-shell.is-dark .employee-list-page {
+  background-color: #1b251f;
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 31px,
+    rgb(255 255 255 / 3%) 32px
+  );
+  color: #e8eee8;
+}
+
+.app-shell.is-dark .employee-list-heading h1 {
+  color: #edf2eb;
+}
+
+.app-shell.is-dark .employee-list-heading p,
+.app-shell.is-dark .employee-list-table th,
+.app-shell.is-dark .employee-list-empty {
+  color: #b6c3b9;
+}
+
+.app-shell.is-dark .employee-list-count,
+.app-shell.is-dark .employee-list-table-wrap,
+.app-shell.is-dark .employee-list-table th,
+.app-shell.is-dark .employee-list-table td {
+  border-color: #3a4a40;
+}
+
+.app-shell.is-dark .employee-list-button:hover {
+  background: #29382e;
+}
+
+.app-shell.is-dark .employee-list-count {
+  color: #d4dfd5;
+}
+
+.app-shell.is-dark .employee-list-example {
+  border-color: #46564b;
+  color: #b6c3b9;
+}
+
+.app-shell.is-dark .employee-list-table td {
+  color: #e1e9e1;
+}
+
+.app-shell.is-dark .employee-list-open {
+  color: #b6c3b9;
+}
+
+.app-shell.is-dark .employee-list-source {
+  color: #e7bf9c;
+}
+
+.app-shell.is-dark .course-list-heading h1 {
+  color: #edf2eb;
+}
+
+.app-shell.is-dark .course-list-heading p,
+.app-shell.is-dark .course-list-table th,
+.app-shell.is-dark .course-list-empty {
+  color: #b6c3b9;
+}
+
+.app-shell.is-dark .course-list-count,
+.app-shell.is-dark .course-list-table-wrap,
+.app-shell.is-dark .course-list-table th,
+.app-shell.is-dark .course-list-table td {
+  border-color: #3a4a40;
+}
+
+.app-shell.is-dark .course-list-count {
+  color: #d4dfd5;
+}
+
+.app-shell.is-dark .course-list-table td {
+  color: #e1e9e1;
+}
+
+.app-shell.is-dark .course-list-date {
+  color: #b6c3b9 !important;
+}
+
+.app-shell.is-dark .course-list-notice {
+  color: #e7bf9c;
+}
+
+@media (max-width: 620px) {
+  .app-shell {
+    flex-direction: column;
+  }
+}

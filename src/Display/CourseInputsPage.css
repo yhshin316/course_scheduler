@@ -1,0 +1,143 @@
+.course-list-page {
+  min-height: 100%;
+  padding: 1px 0 56px;
+  background-color: #f3f2eb;
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 31px,
+    rgb(44 62 52 / 3%) 32px
+  );
+  color: #24352f;
+  text-align: left;
+}
+
+.course-list-content {
+  width: min(850px, calc(100% - 40px));
+  margin: 64px auto 0;
+}
+
+.course-list-eyebrow {
+  margin: 0 0 14px;
+  color: #b15e48;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+}
+
+.course-list-heading {
+  margin-bottom: 30px;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.course-list-heading h1 {
+  margin: 0 0 9px;
+  color: #24352f;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 40px;
+  font-weight: 400;
+  line-height: 1.12;
+}
+
+.course-list-heading p {
+  margin: 0;
+  color: #66746a;
+  font-size: 14px;
+}
+
+.course-list-count {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border: 1px solid #d9dbd1;
+  color: #566158;
+  font-size: 11px;
+}
+
+.course-list-notice {
+  margin: 0 0 14px;
+  color: #8b604c;
+  font-size: 12px;
+}
+
+.course-list-table-wrap {
+  border-top: 1px solid #cfd3c8;
+  border-bottom: 1px solid #cfd3c8;
+}
+
+.course-list-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.course-list-table th {
+  padding: 13px 15px;
+  border-bottom: 1px solid #d9dbd1;
+  color: #66746a;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.course-list-table td {
+  padding: 15px;
+  border-bottom: 1px solid #e3e5dc;
+  color: #293a31;
+  font-size: 14px;
+  vertical-align: top;
+}
+
+.course-list-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.course-list-text {
+  overflow-wrap: anywhere;
+}
+
+.course-list-date {
+  width: 190px;
+  white-space: nowrap;
+  color: #66746a !important;
+  font-size: 12px !important;
+}
+
+.course-list-empty {
+  margin: 0;
+  padding: 22px 15px;
+  color: #77837a;
+  font-size: 13px;
+}
+
+@media (max-width: 720px) {
+  .course-list-content {
+    width: calc(100% - 32px);
+    margin-top: 44px;
+  }
+
+  .course-list-heading h1 {
+    font-size: 32px;
+  }
+}
+
+@media (max-width: 520px) {
+  .course-list-heading {
+    align-items: start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .course-list-table th,
+  .course-list-table td {
+    padding-inline: 9px;
+  }
+
+  .course-list-date {
+    width: auto;
+    white-space: normal;
+  }
+}

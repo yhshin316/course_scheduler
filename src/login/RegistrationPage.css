@@ -1,0 +1,187 @@
+.registration-page {
+  min-height: 100%;
+  padding: 40px 20px;
+  display: grid;
+  place-items: center;
+  background-color: #f3f2eb;
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 31px,
+    rgb(44 62 52 / 3%) 32px
+  );
+  color: #24352f;
+}
+
+.registration-card {
+  width: min(460px, 100%);
+  padding: 32px 36px;
+  border: 1px solid #d9dbd1;
+  background: #fffefa;
+  box-shadow: 0 20px 60px rgb(46 57 47 / 9%);
+}
+
+.registration-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 32px;
+  color: #24352f;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 19px;
+}
+
+.registration-mark {
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  background: #355a48;
+  color: #fffefa;
+  font-size: 15px;
+  font-style: italic;
+}
+
+.registration-eyebrow {
+  margin: 0 0 10px;
+  color: #b15e48;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+}
+
+.registration-card h1 {
+  margin: 0 0 9px;
+  color: #24352f;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 36px;
+  font-weight: 400;
+  line-height: 1.12;
+}
+
+.registration-copy {
+  margin: 0 0 22px;
+  color: #66746a;
+  font-size: 14px;
+}
+
+.registration-form {
+  display: grid;
+  gap: 15px;
+}
+
+.registration-field label {
+  display: block;
+  margin-bottom: 7px;
+  color: #46564c;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.registration-field input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid #d9dbd1;
+  border-radius: 2px;
+  background: #fffefa;
+  color: #293a31;
+  font: inherit;
+  font-size: 14px;
+}
+
+.registration-field input::placeholder {
+  color: #a6aaa1;
+}
+
+.registration-field input:focus-visible,
+.registration-role input:focus-visible,
+.registration-submit:focus-visible {
+  outline: 2px solid #517b62;
+  outline-offset: 2px;
+}
+
+.registration-role {
+  min-height: 60px;
+  padding: 11px 12px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  border: 1px solid #d9dbd1;
+  background: #f8f8f2;
+  cursor: pointer;
+}
+
+.registration-role input {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  margin: 0;
+  accent-color: #355a48;
+}
+
+.registration-role-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.registration-role strong {
+  color: #46564c;
+  font-size: 12px;
+}
+
+.registration-role small {
+  color: #66746a;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.registration-current-role {
+  margin: -5px 0 0;
+  color: #66746a;
+  font-size: 12px;
+}
+
+.registration-submit {
+  min-height: 44px;
+  border: 1px solid #355a48;
+  background: #355a48;
+  color: #fffefa;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.registration-submit:hover {
+  background: #294b39;
+}
+
+.registration-status {
+  min-height: 18px;
+  margin: -8px 0 0;
+  color: #9b553f;
+  font-size: 12px;
+}
+
+.registration-note {
+  margin: 15px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid #e4e6dc;
+  color: #66746a;
+  font-size: 11px;
+  text-align: center;
+}
+
+@media (max-width: 520px) {
+  .registration-page {
+    padding: 28px 16px;
+  }
+
+  .registration-card {
+    padding: 26px 22px;
+  }
+
+  .registration-card h1 {
+    font-size: 32px;
+  }
+}
