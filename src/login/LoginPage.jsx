@@ -31,9 +31,9 @@ function LoginPage() {
   return (
     <section className="login-page" aria-labelledby="login-title">
       <div className="login-card">
-        <div className="login-brand" aria-label="Margin">
-          <span className="login-mark" aria-hidden="true">M</span>
-          <span>margin</span>
+        <div className="login-brand" aria-label="Course Scheduler">
+          <span className="login-mark" aria-hidden="true">C</span>
+          <span>Course Scheduler</span>
         </div>
 
         <p className="login-eyebrow">ACCOUNT ACCESS</p>

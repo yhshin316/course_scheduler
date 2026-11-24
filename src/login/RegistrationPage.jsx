@@ -22,9 +22,9 @@ function RegistrationPage() {
   return (
     <section className="registration-page" aria-labelledby="registration-title">
       <div className="registration-card">
-        <div className="registration-brand" aria-label="Margin">
-          <span className="registration-mark" aria-hidden="true">M</span>
-          <span>margin</span>
+        <div className="registration-brand" aria-label="Course Scheduler">
+          <span className="registration-mark" aria-hidden="true">C</span>
+          <span>Course Scheduler</span>
         </div>
 
         <p className="registration-eyebrow">CREATE AN ACCOUNT</p>

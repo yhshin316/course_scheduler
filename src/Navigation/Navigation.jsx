@@ -16,8 +16,8 @@ function Navigation({ isDarkMode, onToggleTheme }) {
     <aside className="navigation-sidebar">
       <div>
         <NavLink className="navigation-brand" to="/">
-          <span className="navigation-mark" aria-hidden="true">M</span>
-          <span>margin</span>
+          <span className="navigation-mark" aria-hidden="true">C</span>
+          <span>Course Scheduler</span>
         </NavLink>
 
         <nav className="navigation-menu" aria-label="Main navigation">

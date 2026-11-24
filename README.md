@@ -1,4 +1,4 @@
-# schedulerApp
+# Course Scheduler
 
 A React and Vite application for entering course information, managing teacher profiles, and viewing employee and course lists.
 
