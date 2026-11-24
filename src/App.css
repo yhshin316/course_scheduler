@@ -1,323 +1,473 @@
-.app-shell {
-  min-height: 100svh;
+:root {
+  --ink: #17324d;
+  --muted: #718696;
+  --line: #dce7ec;
+  --bg: #f5f8fa;
+  --teal: #007f91
+}
+
+* {
+  box-sizing: border-box
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif
+}
+
+.shell {
   display: flex;
-  background: #f3f2eb;
+  min-height: 100vh
 }
 
-.app-content {
-  min-width: 0;
-  min-height: 100svh;
-  flex: 1;
-  background: #f3f2eb;
+.sidebar {
+  width: 250px;
+  background: #fff;
+  border-right: 1px solid var(--line);
+  padding: 28px 18px;
+  display: flex;
+  flex-direction: column
 }
 
-.welcome-page {
-  min-height: 100svh;
+.brand {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  padding: 0 8px 35px
+}
+
+.brand>b {
+  width: 37px;
+  height: 37px;
+  border-radius: 11px;
+  background: var(--teal);
+  color: white;
   display: grid;
   place-items: center;
-  color: #24352f;
+  font-size: 20px
 }
 
-.welcome-page h1 {
-  margin: 0;
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: 48px;
-  font-weight: 400;
+.brand strong {
+  display: block
 }
 
-.app-shell.is-dark,
-.app-shell.is-dark .app-content {
-  background: #18211c;
-  color: #e8eee8;
+.brand small,
+.connection small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 4px
 }
 
-.app-shell.is-dark .welcome-page {
-  color: #edf2eb;
+nav {
+  display: grid;
+  gap: 7px
 }
 
-.app-shell.is-dark .navigation-sidebar {
-  background: #151f19;
+nav button,
+button {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  padding: 10px 13px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer
 }
 
-.app-shell.is-dark .navigation-item:hover,
-.app-shell.is-dark .navigation-item.is-active,
-.app-shell.is-dark .theme-toggle:hover {
-  background: #2b4034;
+nav button {
+  border: 0;
+  text-align: left;
+  color: #607787;
+  display: flex;
+  gap: 11px;
+  align-items: center
 }
 
-.app-shell.is-dark .icon-home::before {
-  background: #151f19;
+nav button.active,
+nav button:hover {
+  background: #e9f4f5;
+  color: var(--teal)
 }
 
-.app-shell.is-dark .teacher-profile-page,
-.app-shell.is-dark .login-page {
-  background-color: #1b251f;
-  background-image: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 31px,
-    rgb(255 255 255 / 3%) 32px
-  );
-  color: #e8eee8;
+nav em {
+  margin-left: auto;
+  background: #f7dede;
+  color: #b44b4b;
+  border-radius: 12px;
+  padding: 2px 7px;
+  font-style: normal
 }
 
-.app-shell.is-dark .course-input-page,
-.app-shell.is-dark .course-list-page {
-  background-color: #1b251f;
-  background-image: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 31px,
-    rgb(255 255 255 / 3%) 32px
-  );
-  color: #e8eee8;
+.connection {
+  margin-top: auto;
+  border-top: 1px solid var(--line);
+  padding: 18px 9px 0;
+  color: var(--muted);
+  font-size: 12px
 }
 
-.app-shell.is-dark .course-input-content h1,
-.app-shell.is-dark .teacher-profile-content h1 {
-  color: #edf2eb;
+.connection i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #bdc7cc;
+  margin-right: 7px
 }
 
-.app-shell.is-dark .teacher-profile-back {
-  color: #d4dfd5;
+.connection i.online {
+  background: #27a775
 }
 
-.app-shell.is-dark .teacher-profile-back::before {
-  color: #e29a76;
+main {
+  width: 100%;
+  max-width: 1450px;
+  margin: auto;
+  padding: 34px 46px 22px
 }
 
-.app-shell.is-dark .course-input-eyebrow,
-.app-shell.is-dark .teacher-profile-eyebrow {
-  color: #e29a76;
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 20px;
+  margin-bottom: 22px
 }
 
-.app-shell.is-dark .course-input-panel,
-.app-shell.is-dark .teacher-profile-form {
-  border-color: #3a4a40;
-  background: #222e27;
-  box-shadow: 0 14px 40px rgb(0 0 0 / 18%);
+.eyebrow {
+  display: block;
+  color: var(--teal);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  margin-bottom: 7px
 }
 
-.app-shell.is-dark .course-input-panel label,
-.app-shell.is-dark .teacher-field label,
-.app-shell.is-dark .teacher-availability legend {
-  color: #d4dfd5;
+h1 {
+  font-size: 30px;
+  letter-spacing: -.7px;
+  margin: 0
 }
 
-.app-shell.is-dark .course-input-panel input,
-.app-shell.is-dark .teacher-field input,
-.app-shell.is-dark .teacher-field select,
-.app-shell.is-dark .teacher-field textarea {
-  border-color: #46564b;
-  background: #19241e;
-  color: #edf2eb;
+h2 {
+  font-size: 17px;
+  margin: 0 0 5px
 }
 
-.app-shell.is-dark .teacher-field input:disabled,
-.app-shell.is-dark .teacher-field select:disabled,
-.app-shell.is-dark .teacher-field textarea:disabled {
-  background: #2a352e;
-  color: #c2cec4;
+h3 {
+  font-size: 12px;
+  margin: 0
 }
 
-.app-shell.is-dark .course-input-panel input::placeholder,
-.app-shell.is-dark .teacher-field textarea::placeholder {
-  color: #9daaa0;
+p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0
 }
 
-.app-shell.is-dark .course-input-status,
-.app-shell.is-dark .teacher-profile-status,
-.app-shell.is-dark .teacher-profile-intro {
-  color: #b6c3b9;
+.controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px
 }
 
-.app-shell.is-dark .teacher-day span {
-  border-color: #46564b;
-  color: #d4dfd5;
+.controls label {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 700;
+  display: grid;
+  gap: 5px
 }
 
-.app-shell.is-dark .teacher-day input:checked + span {
-  border-color: #789b7e;
-  background: #34493a;
-  color: #f0f3ec;
+.controls select {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  font: inherit;
+  font-size: 12px
 }
 
-.app-shell.is-dark .login-card {
-  border-color: #3a4a40;
-  background: #222e27;
-  box-shadow: 0 20px 60px rgb(0 0 0 / 24%);
+.notice {
+  padding: 11px 14px;
+  background: #edfafa;
+  border: 1px solid #b9dede;
+  border-radius: 8px;
+  color: #176674;
+  font-size: 13px;
+  margin-bottom: 18px
 }
 
-.app-shell.is-dark .login-card h1 {
-  color: #edf2eb;
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 18px
 }
 
-.app-shell.is-dark .login-copy,
-.app-shell.is-dark .login-note {
-  color: #b6c3b9;
+.stat,
+.panel {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 11px
 }
 
-.app-shell.is-dark .login-field label {
-  color: #d4dfd5;
+.stat {
+  padding: 16px 18px
 }
 
-.app-shell.is-dark .login-field input {
-  border-color: #46564b;
-  background: #19241e;
-  color: #edf2eb;
+.stat span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 8px
 }
 
-.app-shell.is-dark .login-field input::placeholder {
-  color: #9daaa0;
+.stat strong {
+  font-size: 25px
 }
 
-.app-shell.is-dark .login-status {
-  color: #e7bf9c;
+.danger-text {
+  color: #bd5353
 }
 
-.app-shell.is-dark .registration-page {
-  background-color: #1b251f;
-  background-image: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 31px,
-    rgb(255 255 255 / 3%) 32px
-  );
-  color: #e8eee8;
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 285px;
+  gap: 18px
 }
 
-.app-shell.is-dark .registration-card {
-  border-color: #3a4a40;
-  background: #222e27;
-  box-shadow: 0 20px 60px rgb(0 0 0 / 24%);
+.panel {
+  padding: 22px;
+  box-shadow: 0 3px 12px rgba(28, 65, 89, .03)
 }
 
-.app-shell.is-dark .registration-card h1 {
-  color: #edf2eb;
+.panel-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 15px;
+  margin-bottom: 19px
 }
 
-.app-shell.is-dark .registration-copy,
-.app-shell.is-dark .registration-note,
-.app-shell.is-dark .registration-current-role {
-  color: #b6c3b9;
+.panel-title>div:last-child {
+  display: flex;
+  gap: 8px
 }
 
-.app-shell.is-dark .registration-field label,
-.app-shell.is-dark .registration-role strong {
-  color: #d4dfd5;
+.primary {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: #fff
 }
 
-.app-shell.is-dark .registration-field input {
-  border-color: #46564b;
-  background: #19241e;
-  color: #edf2eb;
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 13px
 }
 
-.app-shell.is-dark .registration-field input::placeholder {
-  color: #9daaa0;
+.toolbar input {
+  width: 310px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px
 }
 
-.app-shell.is-dark .registration-role {
-  border-color: #46564b;
-  background: #19241e;
+.toolbar span {
+  font-size: 12px;
+  color: var(--muted)
 }
 
-.app-shell.is-dark .registration-role small {
-  color: #a9b8ad;
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px
 }
 
-.app-shell.is-dark .registration-status {
-  color: #e7bf9c;
+th {
+  text-align: left;
+  color: #79909f;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  border-bottom: 1px solid var(--line);
+  padding: 11px 10px
 }
 
-.app-shell.is-dark .employee-list-page {
-  background-color: #1b251f;
-  background-image: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 31px,
-    rgb(255 255 255 / 3%) 32px
-  );
-  color: #e8eee8;
+td {
+  border-bottom: 1px solid #edf2f4;
+  padding: 13px 10px;
+  color: #4c6678
 }
 
-.app-shell.is-dark .employee-list-heading h1 {
-  color: #edf2eb;
+.ready {
+  background: #e7f5ed;
+  color: #27805a;
+  padding: 4px 8px;
+  border-radius: 20px;
+  font-size: 10px
 }
 
-.app-shell.is-dark .employee-list-heading p,
-.app-shell.is-dark .employee-list-table th,
-.app-shell.is-dark .employee-list-empty {
-  color: #b6c3b9;
+.empty {
+  text-align: center;
+  padding: 35px;
+  color: var(--muted)
 }
 
-.app-shell.is-dark .employee-list-count,
-.app-shell.is-dark .employee-list-table-wrap,
-.app-shell.is-dark .employee-list-table th,
-.app-shell.is-dark .employee-list-table td {
-  border-color: #3a4a40;
+.readiness {
+  display: flex;
+  justify-content: space-between;
+  padding: 13px 0;
+  border-bottom: 1px solid #edf2f4;
+  font-size: 12px;
+  color: #536d7c
 }
 
-.app-shell.is-dark .employee-list-button:hover {
-  background: #29382e;
+.readiness b {
+  color: #bd5c5c;
+  font-size: 11px
 }
 
-.app-shell.is-dark .employee-list-count {
-  color: #d4dfd5;
+.readiness b.green {
+  color: #27805a
 }
 
-.app-shell.is-dark .employee-list-example {
-  border-color: #46564b;
-  color: #b6c3b9;
+.tip {
+  background: #f5fafb;
+  border-radius: 8px;
+  padding: 13px;
+  margin-top: 22px
 }
 
-.app-shell.is-dark .employee-list-table td {
-  color: #e1e9e1;
+.tip b {
+  font-size: 12px
 }
 
-.app-shell.is-dark .employee-list-open {
-  color: #b6c3b9;
+.tip p {
+  font-size: 11px;
+  margin-top: 6px
 }
 
-.app-shell.is-dark .employee-list-source {
-  color: #e7bf9c;
+.calendar {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px
 }
 
-.app-shell.is-dark .course-list-heading h1 {
-  color: #edf2eb;
+.day {
+  min-height: 300px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd
 }
 
-.app-shell.is-dark .course-list-heading p,
-.app-shell.is-dark .course-list-table th,
-.app-shell.is-dark .course-list-empty {
-  color: #b6c3b9;
+.day h3 {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--teal)
 }
 
-.app-shell.is-dark .course-list-count,
-.app-shell.is-dark .course-list-table-wrap,
-.app-shell.is-dark .course-list-table th,
-.app-shell.is-dark .course-list-table td {
-  border-color: #3a4a40;
+.course {
+  margin: 10px;
+  padding: 12px;
+  border-left: 3px solid var(--teal);
+  background: #eef8f8;
+  border-radius: 6px;
+  display: grid;
+  gap: 5px
 }
 
-.app-shell.is-dark .course-list-count {
-  color: #d4dfd5;
+.course span,
+.course small {
+  font-size: 10px;
+  color: var(--muted)
 }
 
-.app-shell.is-dark .course-list-table td {
-  color: #e1e9e1;
+.empty-state {
+  text-align: center;
+  padding: 65px 20px;
+  color: var(--muted)
 }
 
-.app-shell.is-dark .course-list-date {
-  color: #b6c3b9 !important;
+.conflict {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  background: #fff7f7;
+  border: 1px solid #efd0d0;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  color: #8b4646;
+  font-size: 12px
 }
 
-.app-shell.is-dark .course-list-notice {
-  color: #e7bf9c;
+.conflict b {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #d76868;
+  color: #fff;
+  display: grid;
+  place-items: center
 }
 
-@media (max-width: 620px) {
-  .app-shell {
-    flex-direction: column;
+footer {
+  margin-top: 32px;
+  color: #9aaab5;
+  font-size: 11px;
+  display: flex;
+  justify-content: space-between
+}
+
+footer span {
+  color: #afbdc5
+}
+
+@media(max-width:900px) {
+  .sidebar {
+    width: 205px
+  }
+
+  main {
+    padding: 25px
+  }
+
+  .grid {
+    grid-template-columns: 1fr
+  }
+
+  .stats {
+    grid-template-columns: repeat(2, 1fr)
+  }
+
+  header {
+    align-items: flex-start;
+    flex-direction: column
+  }
+}
+
+@media(max-width:600px) {
+  .sidebar {
+    display: none
+  }
+
+  main {
+    padding: 20px
+  }
+
+  .calendar {
+    grid-template-columns: repeat(5, 175px);
+    overflow: auto
   }
 }
