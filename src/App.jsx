@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import toast, { Toaster } from 'react-hot-toast'
 import "./App.css";
 
@@ -64,6 +64,23 @@ function csvCell(value) {
   let text = String(value ?? '')
   if (/^\s*[=+\-@]/.test(text)) text = `'${text}`
   return `"${text.replaceAll('"', '""')}"`
+}
+
+function getConflictExplanation(conflict) {
+  const explanations = {
+    INSTRUCTOR_UNASSIGNED: 'No instructor is assigned to this course. Choose an instructor before saving the schedule.',
+    INSTRUCTOR_UNQUALIFIED: 'The selected instructor is not listed as qualified to teach this course.',
+    INSTRUCTOR_UNAVAILABLE: 'The selected time is outside this instructor’s available teaching blocks.',
+    INSTRUCTOR_OVERLAP: 'The same instructor is assigned to multiple courses at the same time.',
+    INSTRUCTOR_MAX_LOAD: 'The instructor has more assigned courses than their maximum course load.',
+    ROOM_UNASSIGNED: 'No room is assigned. Select a room that meets the course requirements.',
+    ROOM_CAPACITY: 'The room has fewer seats than the course’s predicted enrollment.',
+    ROOM_TYPE_MISMATCH: 'This course requires a laboratory room, but the selected room is not a lab.',
+    ROOM_EQUIPMENT_MISSING: 'The selected room does not have all equipment required by the course.',
+    ROOM_UNAVAILABLE: 'The room is not available during the selected day and time block.',
+    ROOM_OVERLAP: 'The same room is assigned to multiple courses at the same time.',
+  }
+  return explanations[conflict.code] || `This assignment does not meet the ${conflict.category || 'scheduling'} rule. Review the details and suggested action below.`
 }
 
 function compareDraftAssignments(draftA, draftB) {
@@ -150,7 +167,7 @@ function ResourceTable({ title, description, headers, rows }) {
           <thead>
             <tr>
               {headers.map((header) => (
-                <th key={header}>{header}</th>
+                <th key={header} scope="col">{header}</th>
               ))}
             </tr>
           </thead>
@@ -199,6 +216,7 @@ export default function App() {
   const [savedDraftSearch, setSavedDraftSearch] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [validationLoading, setValidationLoading] = useState(false);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [connected, setConnected] = useState(false);
   const [planningTab, setPlanningTab] = useState("offerings");
@@ -215,6 +233,12 @@ export default function App() {
   const [draftsLoaded, setDraftsLoaded] = useState(false);
   const [editingSection, setEditingSection] = useState(null);
   const [confirmation, setConfirmation] = useState(null);
+  const editDialogRef = useRef(null);
+  const confirmationDialogRef = useRef(null);
+  const confirmationCancelRef = useRef(null);
+  const modalReturnFocusRef = useRef(null);
+  const modalWasOpenRef = useRef(false);
+  const closeEditModalRef = useRef(() => {});
   const [deletingDraftId, setDeletingDraftId] = useState(null);
   const [duplicatingDraftId, setDuplicatingDraftId] = useState(null);
   const [editingConflicts, setEditingConflicts] = useState([]);
@@ -283,6 +307,55 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', warnBeforeUnload)
   }, [draft, savedDraftId])
 
+  useEffect(() => {
+    const dialog = confirmation ? confirmationDialogRef.current : editingSection ? editDialogRef.current : null
+    if (!dialog) {
+      if (modalWasOpenRef.current) {
+        modalWasOpenRef.current = false
+        if (modalReturnFocusRef.current?.isConnected) modalReturnFocusRef.current.focus()
+        modalReturnFocusRef.current = null
+      }
+      return undefined
+    }
+
+    if (!modalWasOpenRef.current) modalReturnFocusRef.current = document.activeElement
+    modalWasOpenRef.current = true
+    const focusableSelector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    const focusable = [...dialog.querySelectorAll(focusableSelector)]
+    const initialFocus = confirmation ? confirmationCancelRef.current : focusable[0]
+    ;(initialFocus || dialog).focus()
+
+    function keepFocusInDialog(event) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        if (confirmation) setConfirmation(null)
+        else closeEditModalRef.current()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const currentFocusable = [...dialog.querySelectorAll(focusableSelector)]
+      if (!currentFocusable.length) {
+        event.preventDefault()
+        dialog.focus()
+        return
+      }
+      const first = currentFocusable[0]
+      const last = currentFocusable[currentFocusable.length - 1]
+      if (!dialog.contains(document.activeElement)) {
+        event.preventDefault()
+        first.focus()
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', keepFocusInDialog)
+    return () => document.removeEventListener('keydown', keepFocusInDialog)
+  }, [confirmation, editingSection])
+
   async function loadDrafts() {
     setDraftsLoading(true)
     try {
@@ -309,6 +382,7 @@ export default function App() {
     }
     setEditingSection(null)
   }
+  closeEditModalRef.current = closeEditModal
 
   async function saveDraft() {
     if (!draft) {
@@ -339,7 +413,11 @@ export default function App() {
     }
   }
 
-  async function openDraft(id) {
+  async function openDraft(id, skipUnsavedConfirmation = false) {
+    if (draft && !savedDraftId && !skipUnsavedConfirmation && (draft.id || draft._id) !== id) {
+      setConfirmation({ kind: 'openAnotherDraft', id })
+      return
+    }
     try {
       const openedDraft = await request(`/api/schedules/drafts/${id}`)
       setDraft(openedDraft)
@@ -350,11 +428,14 @@ export default function App() {
       setView("schedule");
       setMessage("Saved draft opened.");
       try {
+        setValidationLoading(true)
         const validation = await request('/api/schedules/validate', { method: 'POST', body: JSON.stringify({ draft: openedDraft }) })
         setConflicts(validation.errors || [])
         setValidationStatus(validation.isValid ? 'valid' : 'issues')
       } catch {
         setMessage('Draft opened, but validation could not be loaded.')
+      } finally {
+        setValidationLoading(false)
       }
     } catch (error) {
       setMessage(`Could not open draft: ${error.message}`);
@@ -464,6 +545,17 @@ export default function App() {
       setEditingSection(null)
       return
     }
+    if (confirmation.kind === 'replaceDraft') {
+      setConfirmation(null)
+      await generateDraft(true)
+      return
+    }
+    if (confirmation.kind === 'openAnotherDraft') {
+      const { id } = confirmation
+      setConfirmation(null)
+      await openDraft(id, true)
+      return
+    }
 
     const item = confirmation.item
     const id = item?.id || item?._id
@@ -473,6 +565,7 @@ export default function App() {
     try {
       await request(`/api/schedules/drafts/${encodeURIComponent(id)}`, { method: 'DELETE' })
       setSavedDrafts((current) => current.filter((saved) => (saved.id || saved._id) !== id))
+      window.setTimeout(() => document.getElementById('saved-drafts-title')?.focus(), 0)
       if (historyDraftId === id) {
         setHistoryDraftId('')
         setDraftVersions([])
@@ -572,6 +665,34 @@ export default function App() {
   ].filter(([id]) => id)).values()]
   const scheduleTimeOptions = [...new Set((draft?.sections || []).map((section) => section.timeBlock).filter(Boolean))].sort()
   const hasScheduleFilters = Object.values(scheduleFilters).some(Boolean)
+  const scheduleUtilization = useMemo(() => {
+    const sections = filteredScheduleSections
+    const availableRoomSlots = workspace.rooms.reduce((total, room) => total + new Set(room.availableBlocks || []).size, 0)
+    const occupiedRoomSlots = new Set(sections
+      .filter((section) => section.roomId && section.day && section.timeBlock)
+      .map((section) => `${section.roomId}|${section.day}|${section.timeBlock}`)).size
+    const coursesPerDay = days.map((day) => ({ day, count: sections.filter((section) => section.day === day).length }))
+    const periods = [...new Set(sections.map((section) => section.timeBlock).filter(Boolean))]
+      .map((timeBlock) => ({ timeBlock, count: sections.filter((section) => section.timeBlock === timeBlock).length }))
+      .sort((left, right) => right.count - left.count || left.timeBlock.localeCompare(right.timeBlock))
+    const instructorDistribution = scheduleInstructorOptions.map((item) => {
+      const assignments = sections.filter((section) => section.instructorId === item.id).length
+      const instructor = workspace.instructors.find((resource) => resource.id === item.id)
+      return { ...item, assignments, maximumLoad: instructor?.maximumCourseLoad ?? null }
+    }).sort((left, right) => right.assignments - left.assignments || (left.name || '').localeCompare(right.name || ''))
+    return {
+      roomUtilization: availableRoomSlots ? Math.round(occupiedRoomSlots / availableRoomSlots * 100) : null,
+      occupiedRoomSlots,
+      availableRoomSlots,
+      coursesPerDay,
+      laboratoryCourses: sections.filter((section) => section.isLab).length,
+      unassignedRooms: sections.filter((section) => !section.roomId).length,
+      unassignedInstructors: sections.filter((section) => !section.instructorId).length,
+      periods,
+      peakPeriod: periods[0] || null,
+      instructorDistribution,
+    }
+  }, [filteredScheduleSections, workspace.rooms, workspace.instructors, days, scheduleInstructorOptions])
   const scheduleStatusLabel = validationStatus === 'valid' ? 'Valid' : validationStatus === 'issues' ? 'Needs Review' : (draft?.status || 'Not validated')
   const instructorWorkload = useMemo(() => workspace.instructors.map((instructor) => {
     const assignments = (draft?.sections || []).filter((section) => section.instructorId && section.instructorId === instructor.id)
@@ -579,9 +700,13 @@ export default function App() {
     return { instructor, assignments, overloaded: assignments.length > maximumLoad }
   }), [workspace.instructors, draft?.sections])
 
-  async function generateDraft() {
+  async function generateDraft(skipUnsavedConfirmation = false) {
     if (!selectedOfferingIds.length) {
       toast.error('Select at least one course offering to generate a draft.')
+      return
+    }
+    if (draft && !savedDraftId && !skipUnsavedConfirmation) {
+      setConfirmation({ kind: 'replaceDraft' })
       return
     }
 
@@ -631,6 +756,7 @@ export default function App() {
     }
 
     const toastId = toast.loading('Validating schedule...')
+    setValidationLoading(true)
 
     try {
       const result = await request('/api/schedules/validate', {
@@ -653,6 +779,8 @@ export default function App() {
     } catch (error) {
       toast.dismiss(toastId)
       toast.error(`Validation failed: ${error.message}`)
+    } finally {
+      setValidationLoading(false)
     }
   }
 
@@ -763,16 +891,22 @@ export default function App() {
   }
 
   const editPanel = editingSection && (
-    <div className="modal-backdrop" onClick={closeEditModal}>
+      <div className="modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) closeEditModal() }}>
       <div
         className="edit-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-assignment-title"
+        aria-describedby="edit-assignment-description"
+        tabIndex={-1}
+        ref={editDialogRef}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="edit-modal-header">
           <div>
             <span className="eyebrow">SCHEDULE ASSIGNMENT</span>
-            <h2>Edit {editingSection.courseCode}</h2>
-            <p>Update the assignment and validate the change.</p>
+            <h2 id="edit-assignment-title">Edit {editingSection.courseCode}</h2>
+            <p id="edit-assignment-description">Update the assignment and validate the change.</p>
           </div>
 
           <button
@@ -785,7 +919,7 @@ export default function App() {
           </button>
         </div>
 
-        <div className="current-assignment" aria-label="Current assignment values">
+        <div className="current-assignment" role="group" aria-label="Current assignment values">
           <strong>Current assignment</strong>
           <span><b>Instructor</b>{editingSection.instructorName || 'Unassigned'}</span>
           <span><b>Room</b>{editingSection.roomNumber || 'Unassigned'}</span>
@@ -934,22 +1068,26 @@ export default function App() {
         <div className="modal-backdrop confirmation-backdrop" onMouseDown={(event) => {
           if (event.target === event.currentTarget) setConfirmation(null)
         }}>
-          <section className={`confirmation-modal${confirmation.kind === 'deleteDraft' ? ' delete-confirmation' : ''}`} role="alertdialog" aria-modal="true" aria-labelledby="confirmation-title" aria-describedby="confirmation-description">
+          <section className={`confirmation-modal${confirmation.kind === 'deleteDraft' ? ' delete-confirmation' : confirmation.kind === 'discardEdit' ? '' : ' replace-confirmation'}`} ref={confirmationDialogRef} tabIndex={-1} role="alertdialog" aria-modal="true" aria-labelledby="confirmation-title" aria-describedby="confirmation-description">
             <div className="confirmation-heading">
               <span className="confirmation-icon" aria-hidden="true">
                 {confirmation.kind === 'deleteDraft' ? (
                   <svg viewBox="0 0 24 24" focusable="false"><path d="M4 7h16M9 7V4h6v3m3 0-.8 13H6.8L6 7m4 4v5m4-5v5" /></svg>
-                ) : '↶'}
+                ) : confirmation.kind === 'discardEdit' ? '↶' : '↻'}
               </span>
               <div>
-                <span className="confirmation-eyebrow">{confirmation.kind === 'deleteDraft' ? 'DELETE SAVED DRAFT' : 'UNSAVED ASSIGNMENT'}</span>
-                <h2 id="confirmation-title">{confirmation.kind === 'deleteDraft' ? 'Delete this draft?' : 'Discard unsaved changes?'}</h2>
+                <span className="confirmation-eyebrow">{confirmation.kind === 'deleteDraft' ? 'DELETE SAVED DRAFT' : confirmation.kind === 'discardEdit' ? 'UNSAVED ASSIGNMENT' : 'UNSAVED DRAFT'}</span>
+                <h2 id="confirmation-title">{confirmation.kind === 'deleteDraft' ? 'Delete this draft?' : confirmation.kind === 'discardEdit' ? 'Discard unsaved changes?' : confirmation.kind === 'replaceDraft' ? 'Replace this draft?' : 'Open another draft?'}</h2>
               </div>
             </div>
             <p id="confirmation-description">
               {confirmation.kind === 'deleteDraft'
                 ? 'This will permanently remove the saved schedule and its assignments.'
-                : 'Your assignment changes will be lost.'}
+                : confirmation.kind === 'discardEdit'
+                  ? 'Your assignment changes will be lost.'
+                  : confirmation.kind === 'replaceDraft'
+                    ? 'Generating a new schedule will replace the unsaved draft currently open.'
+                    : 'Opening another saved draft will replace the unsaved draft currently open.'}
             </p>
             {confirmation.kind === 'deleteDraft' && (
               <div className="confirmation-draft-details">
@@ -961,10 +1099,11 @@ export default function App() {
               </div>
             )}
             {confirmation.kind === 'deleteDraft' && <p className="confirmation-warning">This action can’t be undone.</p>}
+            {(confirmation.kind === 'replaceDraft' || confirmation.kind === 'openAnotherDraft') && <p className="confirmation-warning">Save the current draft first if you want to keep these changes.</p>}
             <div className="confirmation-actions">
-              <button type="button" className="confirmation-cancel" onClick={() => setConfirmation(null)}>Cancel</button>
+              <button ref={confirmationCancelRef} type="button" className="confirmation-cancel" onClick={() => setConfirmation(null)}>Cancel</button>
               <button type="button" className="confirmation-destructive" onClick={confirmAction}>
-                {confirmation.kind === 'deleteDraft' ? 'Delete draft' : 'Discard changes'}
+                {confirmation.kind === 'deleteDraft' ? 'Delete draft' : confirmation.kind === 'discardEdit' ? 'Discard changes' : confirmation.kind === 'replaceDraft' ? 'Replace draft' : 'Open draft'}
               </button>
             </div>
           </section>
@@ -979,21 +1118,24 @@ export default function App() {
               <small>Academic planning assistant</small>
             </div>
           </div>
-          <nav>
+          <nav aria-label="Workspace sections">
             <button
               className={view === "planning" ? "active" : ""}
+              aria-current={view === 'planning' ? 'page' : undefined}
               onClick={() => setView("planning")}
             >
               ▦ <span>Planning Workspace</span>
             </button>
             <button
               className={view === "schedule" ? "active" : ""}
+              aria-current={view === 'schedule' ? 'page' : undefined}
               onClick={() => setView("schedule")}
             >
               ▤ <span>Schedule Builder</span>
             </button>
             <button
               className={view === "conflicts" ? "active" : ""}
+              aria-current={view === 'conflicts' ? 'page' : undefined}
               onClick={() => setView("conflicts")}
             >
               ⚠ <span>Conflict Review</span>
@@ -1001,6 +1143,7 @@ export default function App() {
             </button>
             <button
               className={view === "saved" ? "active" : ""}
+              aria-current={view === 'saved' ? 'page' : undefined}
               onClick={() => {
                 setView("saved");
                 loadDrafts();
@@ -1050,7 +1193,7 @@ export default function App() {
                   <option>Spring 2027</option>
                 </select>
               </label>
-              <button onClick={loadWorkspace} disabled={workspaceLoading}>{workspaceLoading ? 'Loading…' : '↻ Refresh'}</button>
+              <button onClick={loadWorkspace} disabled={workspaceLoading} aria-label="Refresh planning workspace">{workspaceLoading ? 'Loading…' : '↻ Refresh'}</button>
             </div>
           </header>
           {view !== 'print' && <WorkflowProgress
@@ -1075,7 +1218,7 @@ export default function App() {
           </section>}
           {view === "planning" && (
             <>
-              <div className="planning-tabs">
+              <div className="planning-tabs" role="group" aria-label="Planning data sections">
                 {[
                   ["offerings", "Course Offerings"],
                   ["instructors", "Instructors"],
@@ -1084,6 +1227,7 @@ export default function App() {
                 ].map(([key, label]) => (
                   <button
                     className={planningTab === key ? "selected" : ""}
+                    aria-pressed={planningTab === key}
                     onClick={() => setPlanningTab(key)}
                     key={key}
                   >
@@ -1103,14 +1247,17 @@ export default function App() {
                       </div>
                       <button
                         className="primary"
-                        onClick={generateDraft}
+                        onClick={() => generateDraft()}
                         disabled={loading || selectedOfferingIds.length === 0}
+                        aria-busy={loading}
                       >
-                        ✦ Generate selected draft ({selectedOfferingIds.length})
+                        {loading && <span className="inline-spinner" aria-hidden="true" />}
+                        {loading ? 'Generating schedule…' : `✦ Generate selected draft (${selectedOfferingIds.length})`}
                       </button>
                     </div>
                     <div className="toolbar">
                       <input
+                        aria-label="Search course offerings by code or title"
                         placeholder="Search by course code or title"
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
@@ -1127,11 +1274,11 @@ export default function App() {
                       <thead>
                         <tr>
                           <th scope="col" className="offering-select-column">Select</th>
-                          <th>Course</th>
-                          <th>Title</th>
-                          <th>Predicted enrollment</th>
-                          <th>Type</th>
-                          <th>Status</th>
+                          <th scope="col">Course</th>
+                          <th scope="col">Title</th>
+                          <th scope="col">Predicted enrollment</th>
+                          <th scope="col">Type</th>
+                          <th scope="col">Status</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1325,7 +1472,7 @@ export default function App() {
                             <div className="constraint-status-icon" aria-hidden="true">{enabled ? '✓' : '–'}</div>
                             <div className="constraint-body">
                               <div className="constraint-title-row">
-                                <div><h3>{item.name || 'Unnamed rule'}</h3><span className="constraint-type">{item.type || 'General rule'}</span></div>
+                                <div><h3>{item.name || 'Unnamed rule'} <span className="constraint-tooltip" tabIndex="0" role="img" aria-label={`Help: ${item.name || 'scheduling rule'}. ${item.description || 'No description provided.'}`} title={item.description || 'No description provided.'} data-tooltip={item.description || 'No description provided.'}>?</span></h3><span className="constraint-type">{item.type || 'General rule'}</span></div>
                                 <button
                                   className={`constraint-toggle${enabled ? ' is-on' : ''}`}
                                   type="button"
@@ -1375,7 +1522,7 @@ export default function App() {
                   <p>Review the weekly layout. Select any course card to edit its assignment.</p>
                 </div>
                 <div className="schedule-actions">
-                  <button onClick={validateDraft} disabled={!draft || loading}>Validate</button>
+                  <button onClick={validateDraft} disabled={!draft || loading || validationLoading} aria-busy={validationLoading}>{validationLoading && <span className="inline-spinner" aria-hidden="true" />}{validationLoading ? 'Validating…' : 'Validate'}</button>
                   <button onClick={saveDraft} disabled={!draft || loading}>Save draft</button>
                   <details className="schedule-export-menu">
                     <summary aria-label="Export or print schedule">Export <svg className="export-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg></summary>
@@ -1385,7 +1532,7 @@ export default function App() {
                       <button type="button" onClick={() => openPrintView()} disabled={!draft || loading}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 7V3h10v4M5 14H3.5V8.5h13V14H15M5 12h10v5H5zM14 10.5h.01" /></svg>Open print view</button>
                     </div>
                   </details>
-                  <button className="primary" onClick={generateDraft} disabled={loading}>✦ Regenerate</button>
+                  <button className="primary" onClick={() => generateDraft()} disabled={loading} aria-busy={loading}>{loading && <span className="inline-spinner" aria-hidden="true" />}{loading ? 'Generating…' : '✦ Regenerate'}</button>
                 </div>
               </div>
               {draft ? (
@@ -1393,9 +1540,53 @@ export default function App() {
                 <div className="schedule-summary">
                   <span><strong>{scheduledCount}</strong> assignments</span>
                   <span><strong>{assignedCount}</strong> fully assigned</span>
-                  <span className={`validation-pill ${validationStatus}`}>{validationStatus === 'valid' ? '✓ Validated' : validationStatus === 'issues' ? '⚠ Needs review' : '○ Not validated'}</span>
+                  <span className={`validation-pill ${validationStatus}`} role="status" aria-live="polite">{validationLoading ? <><span className="inline-spinner" aria-hidden="true" />Validating…</> : validationStatus === 'valid' ? '✓ Validated' : validationStatus === 'issues' ? '⚠ Needs review' : '○ Not validated'}</span>
                   <small>Select a card to edit instructor, room, day, or time.</small>
                 </div>
+                <section className="schedule-utilization" aria-labelledby="schedule-utilization-title">
+                  <div className="utilization-header">
+                    <div><span className="eyebrow">SCHEDULE OVERVIEW</span><h2 id="schedule-utilization-title">Schedule utilization</h2><p>{hasScheduleFilters ? 'Summary for the courses matching the current filters.' : 'Review how courses, rooms, and instructors are distributed.'}</p></div>
+                    <span className="utilization-course-count">{filteredScheduleSections.length} course(s)</span>
+                  </div>
+                  <div className="utilization-metrics">
+                    <article className="utilization-metric"><span>Room utilization</span><strong>{scheduleUtilization.roomUtilization == null ? '—' : `${scheduleUtilization.roomUtilization}%`}</strong><small>{scheduleUtilization.occupiedRoomSlots} of {scheduleUtilization.availableRoomSlots} available room blocks used</small></article>
+                    <article className="utilization-metric"><span>Laboratory courses</span><strong>{scheduleUtilization.laboratoryCourses}</strong><small>In the displayed schedule</small></article>
+                    <article className={`utilization-metric${scheduleUtilization.unassignedRooms ? ' has-warning' : ''}`}><span>Unassigned rooms</span><strong>{scheduleUtilization.unassignedRooms}</strong><small>Courses without a room</small></article>
+                    <article className={`utilization-metric${scheduleUtilization.unassignedInstructors ? ' has-warning' : ''}`}><span>Unassigned instructors</span><strong>{scheduleUtilization.unassignedInstructors}</strong><small>Courses without an instructor</small></article>
+                  </div>
+                  <div className="utilization-details">
+                    <section className="utilization-chart" aria-labelledby="courses-by-day-title">
+                      <h3 id="courses-by-day-title">Courses per day</h3>
+                      <div className="day-utilization-list">
+                        {scheduleUtilization.coursesPerDay.map(({ day, count }) => {
+                          const maxCount = Math.max(1, ...scheduleUtilization.coursesPerDay.map((item) => item.count))
+                          return <div className="day-utilization-row" key={day}><span>{day}</span><div className="utilization-track"><i style={{ width: `${count / maxCount * 100}%` }} /></div><strong>{count}</strong></div>
+                        })}
+                      </div>
+                    </section>
+                    <section className="utilization-chart" aria-labelledby="peak-period-title">
+                      <h3 id="peak-period-title">Peak scheduling periods</h3>
+                      {scheduleUtilization.peakPeriod ? (
+                        <>
+                          <p className="peak-period-summary"><strong>{scheduleUtilization.peakPeriod.timeBlock}</strong><span>{scheduleUtilization.peakPeriod.count} course(s), busiest time block</span></p>
+                          <div className="peak-period-list">{scheduleUtilization.periods.slice(0, 4).map((period) => <div className="peak-period-row" key={period.timeBlock}><span>{period.timeBlock}</span><strong>{period.count}</strong></div>)}</div>
+                        </>
+                      ) : <p className="utilization-empty">No time blocks are assigned yet.</p>}
+                    </section>
+                    <section className="utilization-chart instructor-distribution" aria-labelledby="workload-distribution-title">
+                      <h3 id="workload-distribution-title">Instructor workload distribution</h3>
+                      {scheduleUtilization.instructorDistribution.length ? (
+                        <div className="instructor-distribution-list">
+                          {scheduleUtilization.instructorDistribution.map((item) => {
+                            const overloaded = item.maximumLoad != null && item.assignments > item.maximumLoad
+                            const denominator = Math.max(item.maximumLoad || 0, 1)
+                            return <div className={`instructor-distribution-row${overloaded ? ' is-overloaded' : ''}`} key={item.id}><span>{item.name || 'Unnamed instructor'}</span><div className="utilization-track"><i style={{ width: `${Math.min(100, item.assignments / denominator * 100)}%` }} /></div><strong>{item.assignments}{item.maximumLoad == null ? '' : ` / ${item.maximumLoad}`}</strong></div>
+                          })}
+                        </div>
+                      ) : <p className="utilization-empty">No instructor records are available.</p>}
+                    </section>
+                  </div>
+                </section>
                 <section className="schedule-filter-panel" aria-label="Filter schedule assignments">
                   <div className="schedule-filter-heading">
                     <div><strong>Filter schedule</strong><span>Showing {filteredScheduleSections.length} of {scheduledCount} courses</span></div>
@@ -1408,7 +1599,7 @@ export default function App() {
                     <label>Day<select value={scheduleFilters.day} onChange={(event) => setScheduleFilters((current) => ({ ...current, day: event.target.value }))}><option value="">All days</option>{days.map((day) => <option key={day} value={day}>{day}</option>)}</select></label>
                     <label>Time block<select value={scheduleFilters.timeBlock} onChange={(event) => setScheduleFilters((current) => ({ ...current, timeBlock: event.target.value }))}><option value="">All time blocks</option><option value="__unassigned__">Unassigned</option>{scheduleTimeOptions.map((time) => <option key={time} value={time}>{time}</option>)}</select></label>
                     <label>Course type<select value={scheduleFilters.type} onChange={(event) => setScheduleFilters((current) => ({ ...current, type: event.target.value }))}><option value="">Lecture and laboratory</option><option value="lecture">Lecture</option><option value="lab">Laboratory</option></select></label>
-                    <label>Validation status<select value={scheduleFilters.status} onChange={(event) => setScheduleFilters((current) => ({ ...current, status: event.target.value }))} disabled={validationStatus === 'pending'}><option value="">All statuses</option><option value="valid">Valid</option><option value="conflict">Conflict</option></select></label>
+                    <label>Validation status<select value={scheduleFilters.status} onChange={(event) => setScheduleFilters((current) => ({ ...current, status: event.target.value }))} disabled={validationStatus === 'pending' || validationLoading}><option value="">All statuses</option><option value="valid">Valid</option><option value="conflict">Conflict</option></select></label>
                   </div>
                 </section>
                 <div className="calendar">
@@ -1441,7 +1632,7 @@ export default function App() {
                   <div className="workload-table-scroll">
                     <table className="workload-table">
                       <thead>
-                        <tr><th>Instructor</th><th>Assigned courses</th><th>Maximum load</th><th>Status</th><th>Actions</th></tr>
+                        <tr><th scope="col">Instructor</th><th scope="col">Assigned courses</th><th scope="col">Maximum load</th><th scope="col">Status</th><th scope="col">Actions</th></tr>
                       </thead>
                       <tbody>
                         {instructorWorkload.length ? instructorWorkload.map(({ instructor, assignments, overloaded }) => (
@@ -1469,9 +1660,9 @@ export default function App() {
               ) : (
                 <div className="empty-state">
                   <span className="empty-state-icon" aria-hidden="true">▤</span>
-                  <h2>No draft exists. Generate a draft to begin.</h2>
-                  <p>Build a schedule draft from your planning inputs.</p>
-                  <button className="primary" onClick={generateDraft} disabled={loading || workspaceLoading}>✦ Generate draft</button>
+                  <h2>No schedule draft exists yet.</h2>
+                  <p>Select your courses in Planning Workspace, then generate a draft to begin.</p>
+                  <button className="primary" onClick={() => { setView('planning'); setPlanningTab('offerings') }}>Select courses</button>
                 </div>
               )}
             </section>
@@ -1504,7 +1695,7 @@ export default function App() {
               <section className="print-course-section">
                 <h2>Course schedule</h2>
                 <table>
-                  <thead><tr><th>Course</th><th>Instructor</th><th>Room</th><th>Day</th><th>Time</th></tr></thead>
+                  <thead><tr><th scope="col">Course</th><th scope="col">Instructor</th><th scope="col">Room</th><th scope="col">Day</th><th scope="col">Time</th></tr></thead>
                   <tbody>{(draft.sections || []).map((section, index) => <tr key={`${section.courseCode}-${index}`}><td>{section.courseCode || '—'}</td><td>{section.instructorName || 'Unassigned'}</td><td>{section.roomNumber || 'Unassigned'}</td><td>{section.day || 'Unassigned'}</td><td>{section.timeBlock || 'Unassigned'}</td></tr>)}</tbody>
                 </table>
               </section>
@@ -1517,8 +1708,9 @@ export default function App() {
                   <h2>Conflict review</h2>
                   <p>Required constraint violations from the selected draft.</p>
                 </div>
-                <button onClick={validateDraft} disabled={!draft}>
-                  Run validation
+                <button onClick={validateDraft} disabled={!draft || validationLoading} aria-busy={validationLoading}>
+                  {validationLoading && <span className="inline-spinner" aria-hidden="true" />}
+                  {validationLoading ? 'Validating…' : 'Run validation'}
                 </button>
               </div>
               {conflicts.length ? (
@@ -1549,6 +1741,10 @@ export default function App() {
                           <div>{affectedCodes.length ? affectedCodes.map((code) => <span className="affected-course-chip" key={code}>{code}</span>) : <span className="affected-course-chip">Multiple courses</span>}</div>
                         </div>
                         <p className="conflict-message">{conflict.message || 'This assignment conflicts with another schedule requirement.'}</p>
+                        <details className="conflict-help">
+                          <summary>What does this conflict mean?</summary>
+                          <p>{getConflictExplanation(conflict)}</p>
+                        </details>
                         {affectedSections.length > 0 ? (
                           <div className="conflict-assignments">
                             {affectedSections.map((section, sectionIndex) => (
@@ -1591,7 +1787,7 @@ export default function App() {
               <div className="saved-header">
                 <div>
                   <span className="eyebrow">SCHEDULE HISTORY</span>
-                  <h2>Saved schedule drafts</h2>
+                  <h2 id="saved-drafts-title" tabIndex={-1}>Saved schedule drafts</h2>
                   <p>Reopen a saved version to review assignments and continue planning.</p>
                 </div>
                 <div className="saved-header-actions">
@@ -1691,10 +1887,10 @@ export default function App() {
                               <div><strong>{formattedModifiedDate}</strong><span>Last modified</span></div>
                             </div>
                             <div className="saved-card-actions">
-                              <button className="saved-open-button" onClick={() => openDraft(item.id || item._id)} disabled={!item.id && !item._id}>Open draft <span aria-hidden="true">→</span></button>
-                              <button className="saved-history-button" onClick={() => loadDraftVersions(item.id || item._id)} disabled={!item.id && !item._id}>History</button>
-                              <button className="saved-duplicate-button" onClick={() => duplicateDraft(item)} disabled={(!item.id && !item._id) || duplicatingDraftId === (item.id || item._id)}>{duplicatingDraftId === (item.id || item._id) ? 'Copying…' : 'Duplicate'}</button>
-                              <button className="saved-delete-button" onClick={() => deleteDraft(item)} disabled={(!item.id && !item._id) || deletingDraftId === (item.id || item._id)}>{deletingDraftId === (item.id || item._id) ? 'Deleting…' : 'Delete'}</button>
+                              <button className="saved-open-button" onClick={() => openDraft(item.id || item._id)} disabled={!item.id && !item._id} aria-label={`Open ${item.name || 'untitled draft'}`} >Open draft <span aria-hidden="true">→</span></button>
+                              <button className="saved-history-button" onClick={() => loadDraftVersions(item.id || item._id)} disabled={!item.id && !item._id} aria-label={`View version history for ${item.name || 'untitled draft'}`}>History</button>
+                              <button className="saved-duplicate-button" onClick={() => duplicateDraft(item)} disabled={(!item.id && !item._id) || duplicatingDraftId === (item.id || item._id)} aria-label={`Duplicate ${item.name || 'untitled draft'}`}>{duplicatingDraftId === (item.id || item._id) ? 'Copying…' : 'Duplicate'}</button>
+                              <button className="saved-delete-button" onClick={() => deleteDraft(item)} disabled={(!item.id && !item._id) || deletingDraftId === (item.id || item._id)} aria-label={`Delete ${item.name || 'untitled draft'}`}>{deletingDraftId === (item.id || item._id) ? 'Deleting…' : 'Delete'}</button>
                             </div>
                           </article>
                         )
@@ -1727,7 +1923,7 @@ export default function App() {
                                 <span className="draft-version-date">Modified {modifiedLabel}</span>
                                 <span className={`saved-status ${versionStatusClass}`}><i aria-hidden="true" />{status}</span>
                                 <span className="draft-version-courses">{snapshot.sections?.length || 0} courses</span>
-                                <button type="button" onClick={() => restoreDraftVersion(historyDraftId, version.versionNumber)} disabled={isCurrent || restoringVersion != null}>
+                                <button type="button" onClick={() => restoreDraftVersion(historyDraftId, version.versionNumber)} disabled={isCurrent || restoringVersion != null} aria-label={`Restore version ${version.versionNumber} from ${modifiedLabel}`}>
                                   {restoringVersion === version.versionNumber ? 'Restoring…' : 'Restore version'}
                                 </button>
                               </article>
@@ -1742,7 +1938,7 @@ export default function App() {
                 <div className="empty-state">
                   <span className="empty-state-icon" aria-hidden="true">▣</span>
                   <h2>No saved drafts yet.</h2>
-                  <p>Generate a schedule and save it to keep a version here.</p>
+                  <p>Select courses, generate a schedule, then choose Save draft to keep a version here.</p>
                 </div>
               ) : (
                 <div className="empty-state" role="status">
