@@ -45,6 +45,38 @@ function Stat({ label, value, danger }) {
   );
 }
 
+function WorkflowProgress({ activeStep, completedSteps, onSelect }) {
+  const steps = [
+    ['planning', 'Plan inputs', 'Review courses and constraints'],
+    ['schedule', 'Build schedule', 'Generate and edit assignments'],
+    ['conflicts', 'Review conflicts', 'Validate required rules'],
+    ['saved', 'Save draft', 'Keep a schedule version'],
+  ]
+
+  return (
+    <nav className="workflow-progress" aria-label="Schedule workflow">
+      {steps.map(([key, title, description], index) => {
+        const complete = completedSteps.includes(key)
+        const active = activeStep === key
+        return (
+          <button
+            className={`workflow-step${active ? ' active' : ''}${complete ? ' complete' : ''}`}
+            key={key}
+            onClick={() => onSelect(key)}
+            aria-current={active ? 'step' : undefined}
+          >
+            <span className="workflow-marker" aria-hidden="true">{complete ? '✓' : index + 1}</span>
+            <span className="workflow-copy">
+              <strong>{title}</strong>
+              <small>{description}</small>
+            </span>
+          </button>
+        )
+      })}
+    </nav>
+  )
+}
+
 function ResourceTable({ title, description, headers, rows }) {
   return (
     <section className="panel resource-panel">
@@ -96,15 +128,21 @@ export default function App() {
     constraints: [],
   });
   const [draft, setDraft] = useState(null);
+  const [validationStatus, setValidationStatus] = useState('pending');
+  const [savedDraftId, setSavedDraftId] = useState(null);
   const [conflicts, setConflicts] = useState([]);
   const [view, setView] = useState("planning");
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [connected, setConnected] = useState(false);
   const [planningTab, setPlanningTab] = useState("offerings");
   const [savedDrafts, setSavedDrafts] = useState([]);
+  const [draftsLoading, setDraftsLoading] = useState(false);
+  const [draftsLoaded, setDraftsLoaded] = useState(false);
   const [editingSection, setEditingSection] = useState(null);
+  const [editingConflicts, setEditingConflicts] = useState([]);
   const [editForm, setEditForm] = useState({
     instructorId: "",
     roomId: "",
@@ -113,7 +151,7 @@ export default function App() {
   });
 
   async function loadWorkspace() {
-    setLoading(true);
+    setWorkspaceLoading(true);
     try {
       setWorkspace(
         await request(
@@ -126,7 +164,7 @@ export default function App() {
       setConnected(false);
       setMessage(`Backend connection failed: ${error.message}`);
     } finally {
-      setLoading(false);
+      setWorkspaceLoading(false);
     }
   }
   useEffect(() => {
@@ -134,11 +172,27 @@ export default function App() {
   }, [semester]);
 
   async function loadDrafts() {
+    setDraftsLoading(true)
     try {
       setSavedDrafts(await request("/api/schedules/drafts"));
+      setDraftsLoaded(true)
     } catch (error) {
       setMessage(`Could not load saved drafts: ${error.message}`);
+    } finally {
+      setDraftsLoading(false)
     }
+  }
+
+  function closeEditModal() {
+    if (loading) return
+    const changed = editingSection && (
+      (editForm.instructorId || '') !== (editingSection.instructorId || '') ||
+      (editForm.roomId || '') !== (editingSection.roomId || '') ||
+      (editForm.day || '') !== (editingSection.day || '') ||
+      (editForm.timeBlock || '') !== (editingSection.timeBlock || '')
+    )
+    if (changed && !window.confirm('Discard your unsaved assignment changes?')) return
+    setEditingSection(null)
   }
 
   async function saveDraft() {
@@ -159,6 +213,7 @@ export default function App() {
       })
 
       setDraft(saved)
+      setSavedDraftId(saved.id || saved._id || true)
       await loadDrafts()
 
       toast.dismiss(toastId)
@@ -172,6 +227,8 @@ export default function App() {
   async function openDraft(id) {
     try {
       setDraft(await request(`/api/schedules/drafts/${id}`));
+      setSavedDraftId(id)
+      setValidationStatus('pending')
       setView("schedule");
       setMessage("Saved draft opened.");
     } catch (error) {
@@ -189,6 +246,8 @@ export default function App() {
     [workspace.offerings, search],
   );
   const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+  const scheduledCount = draft?.sections?.length || 0
+  const assignedCount = draft?.sections?.filter((section) => section.instructorId && section.roomId && section.day && section.timeBlock).length || 0
 
   async function generateDraft() {
     const toastId = toast.loading('Generating schedule draft...')
@@ -205,6 +264,8 @@ export default function App() {
       })
 
       setDraft(generatedDraft)
+      setValidationStatus('pending')
+      setSavedDraftId(null)
       setConflicts([])
       setView('schedule')
 
@@ -233,6 +294,7 @@ export default function App() {
       })
 
       setConflicts(result.errors || [])
+      setValidationStatus(result.isValid ? 'valid' : 'issues')
 
       toast.dismiss(toastId)
 
@@ -251,6 +313,7 @@ export default function App() {
 
   function startEdit(section) {
     setEditingSection(section);
+    setEditingConflicts([]);
     setEditForm({
       instructorId: section.instructorId || "",
       roomId: section.roomId || "",
@@ -292,19 +355,19 @@ export default function App() {
       )
 
       setDraft(result.draft)
+      setSavedDraftId(null)
+      setValidationStatus(result.isValid ? 'valid' : 'issues')
       setConflicts(result.errors || [])
-      setEditingSection(null)
+      setEditingConflicts(result.isValid ? [] : (result.errors || []))
 
       toast.dismiss(toastId)
 
       if (result.isValid) {
+        setEditingSection(null)
         toast.success('Assignment updated successfully.')
         setView('schedule')
       } else {
-        toast.error(
-          `${result.errors?.length || 1} scheduling conflict(s) found.`
-        )
-        setView('conflicts')
+        toast.error(`${result.errors?.length || 1} conflict(s) found. Review the warning and adjust this assignment.`)
       }
     } catch (error) {
       console.error('Save assignment error:', error)
@@ -317,7 +380,7 @@ export default function App() {
   }
 
   const editPanel = editingSection && (
-    <div className="modal-backdrop" onClick={() => setEditingSection(null)}>
+    <div className="modal-backdrop" onClick={closeEditModal}>
       <div
         className="edit-modal"
         onClick={(event) => event.stopPropagation()}
@@ -331,12 +394,35 @@ export default function App() {
 
           <button
             className="modal-close"
-            onClick={() => setEditingSection(null)}
+            onClick={closeEditModal}
+            disabled={loading}
             aria-label="Close"
           >
             ×
           </button>
         </div>
+
+        <div className="current-assignment" aria-label="Current assignment values">
+          <strong>Current assignment</strong>
+          <span><b>Instructor</b>{editingSection.instructorName || 'Unassigned'}</span>
+          <span><b>Room</b>{editingSection.roomNumber || 'Unassigned'}</span>
+          <span><b>Day</b>{editingSection.day || 'Unassigned'}</span>
+          <span><b>Time</b>{editingSection.timeBlock || 'Unassigned'}</span>
+        </div>
+
+        {editingConflicts.length > 0 && (
+          <div className="edit-conflict-warning" role="alert">
+            <strong>⚠ This change creates a scheduling conflict</strong>
+            {editingConflicts.map((item, index) => (
+              <p key={index}>
+                {typeof item === 'string' ? item : (item.message || item.category || 'Scheduling conflict')}
+                {typeof item === 'object' && item.courseCode && ` with ${item.courseCode}`}
+                {typeof item === 'object' && item.suggestedAction && ` ${item.suggestedAction}`}
+              </p>
+            ))}
+            <small>Choose another room or time, then save and validate again.</small>
+          </div>
+        )}
 
         <div className="edit-fields">
           <label>
@@ -428,7 +514,8 @@ export default function App() {
         <div className="modal-footer">
           <button
             className="secondary-button"
-            onClick={() => setEditingSection(null)}
+            onClick={closeEditModal}
+            disabled={loading}
           >
             Cancel
           </button>
@@ -438,7 +525,8 @@ export default function App() {
             onClick={saveSectionEdit}
             disabled={loading}
           >
-            {loading ? 'Saving...' : 'Save and validate'}
+            {loading && <span className="button-spinner" aria-hidden="true" />}
+            {loading ? 'Saving and validating…' : 'Save and validate'}
           </button>
         </div>
       </div>
@@ -534,9 +622,19 @@ export default function App() {
                   <option>Spring 2027</option>
                 </select>
               </label>
-              <button onClick={loadWorkspace}>↻ Refresh</button>
+              <button onClick={loadWorkspace} disabled={workspaceLoading}>{workspaceLoading ? 'Loading…' : '↻ Refresh'}</button>
             </div>
           </header>
+          <WorkflowProgress
+            activeStep={view}
+            completedSteps={[
+              ...(connected ? ['planning'] : []),
+              ...(draft ? ['schedule'] : []),
+              ...(validationStatus !== 'pending' ? ['conflicts'] : []),
+              ...(savedDraftId ? ['saved'] : []),
+            ]}
+            onSelect={setView}
+          />
           {message && <div className="notice">{message}</div>}
           <section className="stats">
             <Stat label="Course offerings" value={workspace.offerings.length} />
@@ -603,7 +701,9 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {offerings.length ? (
+                        {workspaceLoading ? (
+                          <tr><td colSpan="5" className="empty" role="status" aria-live="polite">Loading course offerings…</td></tr>
+                        ) : offerings.length ? (
                           offerings.map((item) => (
                             <tr key={item.id}>
                               <td>
@@ -622,7 +722,7 @@ export default function App() {
                         ) : (
                           <tr>
                             <td colSpan="5" className="empty">
-                              No semester offerings found.
+                              No course offerings found for {semester}.
                             </td>
                           </tr>
                         )}
@@ -701,63 +801,52 @@ export default function App() {
             </>
           )}
           {view === "schedule" && (
-            <section className="panel">
+            <section className="panel schedule-panel">
               <div className="panel-title">
                 <div>
+                  <span className="eyebrow">SCHEDULE BUILDER · {semester.toUpperCase()}</span>
                   <h2>{draft?.name || "Schedule draft"}</h2>
-                  <p>Lecture and laboratory assignments for {semester}</p>
+                  <p>Review the weekly layout. Select any course card to edit its assignment.</p>
                 </div>
-                <div>
-                  <button onClick={validateDraft} disabled={!draft}>
-                    Validate draft
-                  </button>
-                  <button onClick={saveDraft} disabled={!draft}>
-                    Save draft
-                  </button>
-                  <button
-                    onClick={() =>
-                      draft?.sections?.[0] && startEdit(draft.sections[0])
-                    }
-                    disabled={!draft}
-                  >
-                    Edit first assignment
-                  </button>
-                  <button className="primary" onClick={generateDraft}>
-                    Regenerate
-                  </button>
+                <div className="schedule-actions">
+                  <button onClick={validateDraft} disabled={!draft || loading}>Validate</button>
+                  <button onClick={saveDraft} disabled={!draft || loading}>Save draft</button>
+                  <button className="primary" onClick={generateDraft} disabled={loading}>✦ Regenerate</button>
                 </div>
               </div>
               {draft ? (
+                <>
+                <div className="schedule-summary">
+                  <span><strong>{scheduledCount}</strong> assignments</span>
+                  <span><strong>{assignedCount}</strong> fully assigned</span>
+                  <span className={`validation-pill ${validationStatus}`}>{validationStatus === 'valid' ? '✓ Validated' : validationStatus === 'issues' ? '⚠ Needs review' : '○ Not validated'}</span>
+                  <small>Select a card to edit instructor, room, day, or time.</small>
+                </div>
                 <div className="calendar">
                   {days.map((day) => (
                     <div className="day" key={day}>
-                      <h3>{day}</h3>
-                      {(draft.sections || [])
-                        .filter((s) => s.day === day)
+                      <h3><span>{day}</span><span className="day-count">{(draft.sections || []).filter((section) => section.day === day).length}</span></h3>
+                      {(draft.sections || []).filter((s) => s.day === day)
                         .map((s, i) => (
-                          <div className="course" key={`${s.courseCode}-${i}`}>
-                            <b>{s.courseCode}</b>
-                            <span>{s.timeBlock || "Time unassigned"}</span>
-                            <small>
-                              {s.isLab ? "Laboratory" : "Lecture"} ·{" "}
-                              {s.roomNumber || "Room unassigned"} ·{" "}
-                              {s.instructorName || "Instructor unassigned"}
-                            </small>{" "}
-                            <button
-                              className="course-edit-button"
-                              onClick={() => startEdit(s)}
-                            >
-                              Edit assignment
-                            </button>
-                          </div>
+                          <button className={`course ${s.isLab ? 'lab' : ''}`} key={`${s.courseCode}-${i}`} onClick={() => startEdit(s)} aria-label={`Edit ${s.courseCode} ${s.isLab ? 'laboratory' : 'lecture'} assignment`}>
+                            <span className="course-topline"><b>{s.courseCode}</b><span className="course-kind">{s.isLab ? "Lab" : "Lecture"}</span></span>
+                            <strong className="course-time">{s.timeBlock || "Time unassigned"}</strong>
+                            <span className="course-meta">⌖ {s.roomNumber || "Room unassigned"}</span>
+                            <span className="course-meta">◉ {s.instructorName || "Instructor unassigned"}</span>
+                            <span className="course-hint">Click to edit <span aria-hidden="true">↗</span></span>
+                          </button>
                         ))}
+                      {!draft.sections?.some((section) => section.day === day) && <p className="day-empty">No assignments</p>}
                     </div>
                   ))}
                 </div>
+                </>
               ) : (
                 <div className="empty-state">
-                  <h2>No draft generated yet</h2>
-                  <p>Generate a draft from the Planning Workspace.</p>
+                  <span className="empty-state-icon" aria-hidden="true">▤</span>
+                  <h2>No draft exists. Generate a draft to begin.</h2>
+                  <p>Build a schedule draft from your planning inputs.</p>
+                  <button className="primary" onClick={generateDraft} disabled={loading || workspaceLoading}>✦ Generate draft</button>
                 </div>
               )}
             </section>
@@ -775,7 +864,7 @@ export default function App() {
               </div>
               {conflicts.length ? (
                 conflicts.map((item, i) => (
-                  <div className="conflict detailed-conflict" key={i}>
+                  <div className="conflict detailed-conflict" key={i} role="alert">
                     <b>!</b>
                     <div>
                       <strong>{item.category || "Scheduling conflict"}</strong>
@@ -790,10 +879,17 @@ export default function App() {
                     </div>
                   </div>
                 ))
+              ) : validationStatus === 'valid' ? (
+                <div className="empty-state success-state" role="status">
+                  <span className="empty-state-icon" aria-hidden="true">✓</span>
+                  <h2>No conflicts found. Your schedule is ready for review.</h2>
+                  <p>All required scheduling rules passed validation.</p>
+                </div>
               ) : (
                 <div className="empty-state">
-                  <h2>No conflicts to display</h2>
-                  <p>Generate or validate a draft to see issues here.</p>
+                  <span className="empty-state-icon" aria-hidden="true">i</span>
+                  <h2>{draft ? 'No conflicts to display yet.' : 'No schedule to review yet.'}</h2>
+                  <p>{draft ? 'Run validation to check this schedule for conflicts.' : 'Generate a draft to check its assignments.'}</p>
                 </div>
               )}
             </section>
@@ -809,7 +905,9 @@ export default function App() {
                 </div>
                 <button onClick={loadDrafts}>↻ Refresh drafts</button>
               </div>
-              {savedDrafts.length ? (
+              {draftsLoading ? (
+                <div className="empty-state" role="status" aria-live="polite"><span className="loading-spinner" aria-hidden="true" /> <h2>Loading saved drafts…</h2></div>
+              ) : savedDrafts.length ? (
                 <table>
                   <thead>
                     <tr>
@@ -842,10 +940,17 @@ export default function App() {
                     ))}
                   </tbody>
                 </table>
-              ) : (
+              ) : draftsLoaded ? (
                 <div className="empty-state">
-                  <h2>No saved drafts</h2>
-                  <p>Generate a schedule and click Save draft.</p>
+                  <span className="empty-state-icon" aria-hidden="true">▣</span>
+                  <h2>No saved drafts yet.</h2>
+                  <p>Generate a schedule and save it to keep a version here.</p>
+                </div>
+              ) : (
+                <div className="empty-state" role="status">
+                  <h2>Saved drafts could not be loaded.</h2>
+                  <p>Check the connection, then try again.</p>
+                  <button onClick={loadDrafts}>Retry loading drafts</button>
                 </div>
               )}
             </section>
