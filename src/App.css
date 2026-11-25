@@ -1084,6 +1084,13 @@ footer span { color: #718696; }
 .constraint-state i { width: 6px; height: 6px; border-radius: 50%; background: #27805a; }
 .constraint-state.is-disabled { border-color: #dce4e8; background: #f5f7f8; color: #536d7e; }
 .constraint-state.is-disabled i { background: #718696; }
+.constraint-toggle { display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; min-width: 94px; justify-content: flex-start; padding: 6px 9px; border: 1px solid #dce4e8; border-radius: 20px; background: #f5f7f8; color: #536d7e; font-size: 10px; font-weight: 750; }
+.constraint-toggle > span { width: 24px; height: 14px; border-radius: 10px; background: #aebbc2; position: relative; transition: background .15s ease; }
+.constraint-toggle > span::after { content: ""; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: #fff; transition: transform .15s ease; }
+.constraint-toggle.is-on { border-color: #c9e4d4; background: #eff8f2; color: #17623e; }
+.constraint-toggle.is-on > span { background: #27805a; }
+.constraint-toggle.is-on > span::after { transform: translateX(10px); }
+.constraint-toggle:disabled { cursor: wait; opacity: .65; }
 .constraint-body > p { margin-top: 9px; color: #536d7e; font-size: 11px; line-height: 1.55; }
 .constraint-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid #edf1f3; }
 .constraint-footer > span:last-child { color: #61798a; font-size: 10px; }

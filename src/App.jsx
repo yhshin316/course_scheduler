@@ -157,11 +157,13 @@ export default function App() {
   async function loadWorkspace() {
     setWorkspaceLoading(true);
     try {
-      setWorkspace(
-        await request(
-          `/api/planning/workspace/${encodeURIComponent(semester)}`,
-        ),
-      );
+      const nextWorkspace = await request(
+        `/api/planning/workspace/${encodeURIComponent(semester)}`,
+      )
+      // The workspace endpoint includes enabled constraints for planning. Fetch
+      // the full list separately so users can also see and re-enable disabled rules.
+      const constraints = await request('/api/constraints')
+      setWorkspace({ ...nextWorkspace, constraints })
       setConnected(true);
       setMessage(`Planning data loaded for ${semester}.`);
     } catch (error) {
@@ -169,6 +171,31 @@ export default function App() {
       setMessage(`Backend connection failed: ${error.message}`);
     } finally {
       setWorkspaceLoading(false);
+    }
+  }
+
+  async function toggleConstraint(item) {
+    const id = item.id || item._id
+    if (!id) {
+      toast.error('This rule cannot be updated because it has no ID.')
+      return
+    }
+
+    const updated = { ...item, id, enabled: !(item.enabled === true || item.enabled === 'true' || item.enabled === 1) }
+    try {
+      await request(`/api/constraints/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(updated),
+      })
+      setWorkspace((current) => ({
+        ...current,
+        constraints: current.constraints.map((constraint) =>
+          (constraint.id || constraint._id) === id ? updated : constraint,
+        ),
+      }))
+      toast.success(`${updated.name || 'Rule'} ${updated.enabled ? 'enabled' : 'disabled'}.`)
+    } catch (error) {
+      toast.error(`Could not update rule: ${error.message}`)
     }
   }
   useEffect(() => {
@@ -889,7 +916,7 @@ export default function App() {
                       <span aria-hidden="true">⌕</span>
                       <input aria-label="Search constraints by name, type, priority, or description" placeholder="Search rules or descriptions" value={constraintSearch} onChange={(event) => setConstraintSearch(event.target.value)} />
                     </label>
-                    <span>Active rules are applied during scheduling.</span>
+                    <span>Choose which rules are enabled for planning.</span>
                   </div>
                   {workspaceLoading ? (
                     <div className="constraint-empty" role="status" aria-live="polite"><span className="loading-spinner" aria-hidden="true" /><h3>Loading scheduling constraints…</h3></div>
@@ -904,10 +931,21 @@ export default function App() {
                             <div className="constraint-body">
                               <div className="constraint-title-row">
                                 <div><h3>{item.name || 'Unnamed rule'}</h3><span className="constraint-type">{item.type || 'General rule'}</span></div>
-                                <span className={`constraint-state ${enabled ? 'is-enabled' : 'is-disabled'}`}><i aria-hidden="true" />{enabled ? 'Enabled' : 'Disabled'}</span>
+                                <button
+                                  className={`constraint-toggle${enabled ? ' is-on' : ''}`}
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={enabled}
+                                  aria-label={`${enabled ? 'Disable' : 'Enable'} ${item.name || 'scheduling rule'}`}
+                                  onClick={() => toggleConstraint(item)}
+                                  disabled={workspaceLoading}
+                                >
+                                  <span aria-hidden="true" />
+                                  {enabled ? 'Enabled' : 'Disabled'}
+                                </button>
                               </div>
                               <p>{item.description || 'No description provided for this scheduling rule.'}</p>
-                              <div className="constraint-footer"><span className={`priority-badge priority-${String(priorityLabel).toLowerCase()}`}><b aria-hidden="true">◆</b> {priorityLabel} priority</span><span>{enabled ? 'Included in schedule generation' : 'Not applied to generated schedules'}</span></div>
+                              <div className="constraint-footer"><span className={`priority-badge priority-${String(priorityLabel).toLowerCase()}`}><b aria-hidden="true">◆</b> {priorityLabel} priority</span><span>{enabled ? 'Enabled for planning' : 'Disabled for planning'}</span></div>
                             </div>
                           </article>
                         )
