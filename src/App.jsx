@@ -133,6 +133,10 @@ export default function App() {
   const [conflicts, setConflicts] = useState([]);
   const [view, setView] = useState("planning");
   const [search, setSearch] = useState("");
+  const [instructorSearch, setInstructorSearch] = useState("");
+  const [roomSearch, setRoomSearch] = useState("");
+  const [constraintSearch, setConstraintSearch] = useState("");
+  const [savedDraftSearch, setSavedDraftSearch] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
@@ -245,6 +249,24 @@ export default function App() {
       ),
     [workspace.offerings, search],
   );
+  const filteredInstructors = useMemo(() => workspace.instructors.filter((item) => {
+    const qualified = Array.isArray(item.qualifiedCourses) ? item.qualifiedCourses.join(' ') : (item.qualifiedCourses || '')
+    const blocks = Array.isArray(item.availableBlocks) ? item.availableBlocks.join(' ') : (item.availableBlocks || '')
+    return `${item.name || ''} ${qualified} ${blocks}`.toLowerCase().includes(instructorSearch.toLowerCase())
+  }), [workspace.instructors, instructorSearch]);
+  const filteredRooms = useMemo(() => workspace.rooms.filter((item) => {
+    const searchableValues = [item.roomNumber, item.building, item.roomType, item.equipment, item.availableBlocks]
+      .flatMap((value) => Array.isArray(value) ? value : [value || ''])
+    return searchableValues.join(' ').toLowerCase().includes(roomSearch.toLowerCase())
+  }), [workspace.rooms, roomSearch]);
+  const filteredConstraints = useMemo(() => workspace.constraints.filter((item) => (
+    `${item.name || ''} ${item.type || ''} ${item.priority || ''} ${item.description || ''} ${item.enabled === true || item.enabled === 'true' || item.enabled === 1 ? 'enabled active' : 'disabled inactive'}`
+      .toLowerCase().includes(constraintSearch.toLowerCase())
+  )), [workspace.constraints, constraintSearch]);
+  const filteredSavedDrafts = useMemo(() => savedDrafts.filter((item) => (
+    `${item.name || ''} ${item.semester || ''} ${item.status || ''} ${item.createdAtUtc || ''}`
+      .toLowerCase().includes(savedDraftSearch.toLowerCase())
+  )), [savedDrafts, savedDraftSearch]);
   const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
   const scheduledCount = draft?.sections?.length || 0
   const assignedCount = draft?.sections?.filter((section) => section.instructorId && section.roomId && section.day && section.timeBlock).length || 0
@@ -635,7 +657,6 @@ export default function App() {
             ]}
             onSelect={setView}
           />
-          {message && <div className="notice">{message}</div>}
           <section className="stats">
             <Stat label="Course offerings" value={workspace.offerings.length} />
             <Stat label="Instructors" value={workspace.instructors.length} />
@@ -753,50 +774,149 @@ export default function App() {
                 </section>
               )}
               {planningTab === "instructors" && (
-                <ResourceTable
-                  title="Instructor availability"
-                  description="Qualifications, availability, and teaching preferences."
-                  headers={[
-                    "Name",
-                    "Qualified courses",
-                    "Available blocks",
-                    "Maximum load",
-                  ]}
-                  rows={workspace.instructors.map((item) => [
-                    item.name,
-                    item.qualifiedCourses?.join(", "),
-                    item.availableBlocks?.join("; "),
-                    item.maximumCourseLoad,
-                  ])}
-                />
+                <section className="panel instructor-panel">
+                  <div className="instructor-header">
+                    <div>
+                      <span className="eyebrow">TEACHING RESOURCES</span>
+                      <h2>Instructor availability</h2>
+                      <p>Compare course qualifications, available teaching blocks, and workload limits.</p>
+                    </div>
+                    <span className="instructor-total">{filteredInstructors.length} <small>of {workspace.instructors.length} instructors</small></span>
+                  </div>
+                  <div className="instructor-toolbar">
+                    <label className="instructor-search">
+                      <span aria-hidden="true">⌕</span>
+                      <input aria-label="Search instructors, courses, or availability" placeholder="Search name, course, or time block" value={instructorSearch} onChange={(event) => setInstructorSearch(event.target.value)} />
+                    </label>
+                    <span>Use these details to match teaching assignments.</span>
+                  </div>
+                  {workspaceLoading ? (
+                    <div className="instructor-empty" role="status" aria-live="polite"><span className="loading-spinner" aria-hidden="true" /><h3>Loading instructor availability…</h3></div>
+                  ) : filteredInstructors.length ? (
+                    <div className="instructor-grid">
+                      {filteredInstructors.map((item) => {
+                        const qualifiedCourses = Array.isArray(item.qualifiedCourses) ? item.qualifiedCourses : (item.qualifiedCourses ? [item.qualifiedCourses] : [])
+                        const availableBlocks = Array.isArray(item.availableBlocks) ? item.availableBlocks : (item.availableBlocks ? [item.availableBlocks] : [])
+                        const initials = (item.name || 'Instructor').split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase()
+                        return (
+                          <article className="instructor-card" key={item.id || item.name}>
+                            <div className="instructor-card-head">
+                              <span className="instructor-avatar" aria-hidden="true">{initials}</span>
+                              <div className="instructor-identity"><h3>{item.name || 'Unnamed instructor'}</h3><span>Instructor</span></div>
+                              <div className="load-badge"><strong>{item.maximumCourseLoad ?? '—'}</strong><small>max courses</small></div>
+                            </div>
+                            <div className="instructor-card-section">
+                              <span className="instructor-section-label">QUALIFIED COURSES</span>
+                              {qualifiedCourses.length ? <div className="instructor-tags">{qualifiedCourses.map((course) => <span className="instructor-tag" key={course}>{course}</span>)}</div> : <p className="instructor-missing">No course qualifications listed</p>}
+                            </div>
+                            <div className="instructor-card-section availability-section">
+                              <span className="instructor-section-label">AVAILABLE BLOCKS <small>{availableBlocks.length}</small></span>
+                              {availableBlocks.length ? <div className="availability-list">{availableBlocks.map((block, index) => <span className="availability-block" key={`${block}-${index}`}><i aria-hidden="true" />{block}</span>)}</div> : <p className="instructor-missing">Availability not specified</p>}
+                            </div>
+                          </article>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <div className="instructor-empty"><span className="empty-state-icon" aria-hidden="true">⌕</span><h3>{workspace.instructors.length ? 'No instructors match your search.' : 'No instructor availability found.'}</h3><p>{workspace.instructors.length ? 'Try a different name, course code, or time block.' : 'Instructor resources will appear here when they are available.'}</p></div>
+                  )}
+                </section>
               )}
               {planningTab === "rooms" && (
-                <ResourceTable
-                  title="Rooms and laboratories"
-                  description="Capacity, room type, equipment, and available blocks."
-                  headers={["Room", "Building", "Capacity", "Type", "Equipment"]}
-                  rows={workspace.rooms.map((item) => [
-                    item.roomNumber,
-                    item.building,
-                    item.capacity,
-                    item.roomType,
-                    item.equipment?.join(", "),
-                  ])}
-                />
+                <section className="panel room-panel">
+                  <div className="room-header">
+                    <div>
+                      <span className="eyebrow">SPACE RESOURCES</span>
+                      <h2>Rooms and laboratories</h2>
+                      <p>Review room capacity, type, equipment, and availability before assigning courses.</p>
+                    </div>
+                    <span className="room-total">{filteredRooms.length} <small>of {workspace.rooms.length} spaces</small></span>
+                  </div>
+                  <div className="room-toolbar">
+                    <label className="room-search">
+                      <span aria-hidden="true">⌕</span>
+                      <input aria-label="Search rooms by number, building, type, or equipment" placeholder="Search room, building, type, or equipment" value={roomSearch} onChange={(event) => setRoomSearch(event.target.value)} />
+                    </label>
+                    <span>Capacity and facilities are shown for each space.</span>
+                  </div>
+                  {workspaceLoading ? (
+                    <div className="room-empty" role="status" aria-live="polite"><span className="loading-spinner" aria-hidden="true" /><h3>Loading rooms and laboratories…</h3></div>
+                  ) : filteredRooms.length ? (
+                    <div className="room-grid">
+                      {filteredRooms.map((item) => {
+                        const equipment = Array.isArray(item.equipment) ? item.equipment : (item.equipment ? [item.equipment] : [])
+                        const availableBlocks = Array.isArray(item.availableBlocks) ? item.availableBlocks : (item.availableBlocks ? [item.availableBlocks] : [])
+                        const isLab = `${item.roomType || ''}`.toLowerCase().includes('lab')
+                        return (
+                          <article className={`room-card${isLab ? ' lab-room' : ''}`} key={item.id || `${item.building}-${item.roomNumber}`}>
+                            <div className="room-card-head">
+                              <span className="room-icon" aria-hidden="true">{isLab ? '⚗' : '▦'}</span>
+                              <div className="room-identity"><span>{item.building || 'Building not specified'}</span><h3>{item.roomNumber || 'Unnamed room'}</h3></div>
+                              <span className="room-type-badge">{item.roomType || 'Room'}</span>
+                            </div>
+                            <div className="room-capacity"><strong>{item.capacity ?? '—'}</strong><span>seats</span><small>Maximum capacity</small></div>
+                            <div className="room-card-section">
+                              <span className="room-section-label">EQUIPMENT & FACILITIES</span>
+                              {equipment.length ? <div className="room-tags">{equipment.map((feature, index) => <span className="room-tag" key={`${feature}-${index}`}>{feature}</span>)}</div> : <p className="room-missing">No equipment listed</p>}
+                            </div>
+                            {(availableBlocks.length > 0 || item.availableBlocks !== undefined) && (
+                              <div className="room-card-section room-availability">
+                                <span className="room-section-label">AVAILABLE BLOCKS <small>{availableBlocks.length}</small></span>
+                                {availableBlocks.length ? <div className="room-tags">{availableBlocks.map((block, index) => <span className="room-time-tag" key={`${block}-${index}`}>{block}</span>)}</div> : <p className="room-missing">Availability not specified</p>}
+                              </div>
+                            )}
+                          </article>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <div className="room-empty"><span className="empty-state-icon" aria-hidden="true">⌕</span><h3>{workspace.rooms.length ? 'No rooms match your search.' : 'No rooms or laboratories found.'}</h3><p>{workspace.rooms.length ? 'Try a different room number, building, type, or equipment.' : 'Room resources will appear here when they are available.'}</p></div>
+                  )}
+                </section>
               )}
               {planningTab === "constraints" && (
-                <ResourceTable
-                  title="Scheduling constraints"
-                  description="Required rules and preferences used by the scheduler."
-                  headers={["Name", "Type", "Priority", "Enabled", "Description"]}
-                  rows={workspace.constraints.map((item) => [
-                    item.name,
-                    item.type,
-                    item.priority,
-                    item.enabled ? "Yes" : "No",
-                    item.description,
-                  ])}
-                />
+                <section className="panel constraint-panel">
+                  <div className="constraint-header">
+                    <div>
+                      <span className="eyebrow">SCHEDULER RULES</span>
+                      <h2>Scheduling constraints</h2>
+                      <p>Review the rules that guide schedule generation and validation.</p>
+                    </div>
+                    <span className="constraint-total">{filteredConstraints.length} <small>of {workspace.constraints.length} rules</small></span>
+                  </div>
+                  <div className="constraint-toolbar">
+                    <label className="constraint-search">
+                      <span aria-hidden="true">⌕</span>
+                      <input aria-label="Search constraints by name, type, priority, or description" placeholder="Search rules or descriptions" value={constraintSearch} onChange={(event) => setConstraintSearch(event.target.value)} />
+                    </label>
+                    <span>Active rules are applied during scheduling.</span>
+                  </div>
+                  {workspaceLoading ? (
+                    <div className="constraint-empty" role="status" aria-live="polite"><span className="loading-spinner" aria-hidden="true" /><h3>Loading scheduling constraints…</h3></div>
+                  ) : filteredConstraints.length ? (
+                    <div className="constraint-list">
+                      {filteredConstraints.map((item) => {
+                        const enabled = item.enabled === true || item.enabled === 'true' || item.enabled === 1
+                        const priorityLabel = item.priority || 'Standard'
+                        return (
+                          <article className={`constraint-card${enabled ? '' : ' constraint-disabled'}`} key={item.id || item.name}>
+                            <div className="constraint-status-icon" aria-hidden="true">{enabled ? '✓' : '–'}</div>
+                            <div className="constraint-body">
+                              <div className="constraint-title-row">
+                                <div><h3>{item.name || 'Unnamed rule'}</h3><span className="constraint-type">{item.type || 'General rule'}</span></div>
+                                <span className={`constraint-state ${enabled ? 'is-enabled' : 'is-disabled'}`}><i aria-hidden="true" />{enabled ? 'Enabled' : 'Disabled'}</span>
+                              </div>
+                              <p>{item.description || 'No description provided for this scheduling rule.'}</p>
+                              <div className="constraint-footer"><span className={`priority-badge priority-${String(priorityLabel).toLowerCase()}`}><b aria-hidden="true">◆</b> {priorityLabel} priority</span><span>{enabled ? 'Included in schedule generation' : 'Not applied to generated schedules'}</span></div>
+                            </div>
+                          </article>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <div className="constraint-empty"><span className="empty-state-icon" aria-hidden="true">⌕</span><h3>{workspace.constraints.length ? 'No rules match your search.' : 'No scheduling constraints found.'}</h3><p>{workspace.constraints.length ? 'Try a different rule name, type, or keyword.' : 'Scheduling rules will appear here when they are available.'}</p></div>
+                  )}
+                </section>
               )}
             </>
           )}
@@ -863,22 +983,49 @@ export default function App() {
                 </button>
               </div>
               {conflicts.length ? (
-                conflicts.map((item, i) => (
-                  <div className="conflict detailed-conflict" key={i} role="alert">
-                    <b>!</b>
-                    <div>
-                      <strong>{item.category || "Scheduling conflict"}</strong>
-                      <small>
-                        Course: {item.courseCode || "Multiple courses"} ·
-                        Severity: {item.severity || "Required"}
-                      </small>
-                      <span>{item.message || item}</span>
-                      {item.suggestedAction && (
-                        <em>Suggested action: {item.suggestedAction}</em>
-                      )}
-                    </div>
-                  </div>
-                ))
+                conflicts.map((item, i) => {
+                  const conflict = typeof item === 'string' ? { message: item } : item
+                  const rawAffectedCodes = conflict.affectedCourseCodes || conflict.courseCodes || [conflict.courseCode, conflict.conflictingCourseCode, conflict.relatedCourseCode].filter(Boolean)
+                  const affectedCodes = Array.isArray(rawAffectedCodes) ? rawAffectedCodes : [rawAffectedCodes]
+                  const affectedSections = (draft?.sections || []).filter((section) => affectedCodes.includes(section.courseCode))
+                  return (
+                    <article className="conflict detailed-conflict conflict-card" key={i} role="alert">
+                      <b className="conflict-icon" aria-hidden="true">!</b>
+                      <div className="conflict-content">
+                        <div className="conflict-heading">
+                          <div>
+                            <span className="conflict-kicker">SCHEDULING CONFLICT</span>
+                            <strong>{conflict.category || conflict.type || "Scheduling conflict"}</strong>
+                          </div>
+                          <span className={`conflict-severity ${String(conflict.severity || 'Required').toLowerCase()}`}>{conflict.severity || 'Required'}</span>
+                        </div>
+                        <div className="conflict-course-list">
+                          <span className="conflict-section-label">AFFECTED COURSE{affectedCodes.length === 1 ? '' : 'S'}</span>
+                          <div>{affectedCodes.length ? affectedCodes.map((code) => <span className="affected-course-chip" key={code}>{code}</span>) : <span className="affected-course-chip">Multiple courses</span>}</div>
+                        </div>
+                        <p className="conflict-message">{conflict.message || 'This assignment conflicts with another schedule requirement.'}</p>
+                        {affectedSections.length > 0 ? (
+                          <div className="conflict-assignments">
+                            {affectedSections.map((section, sectionIndex) => (
+                              <div className="conflict-assignment" key={`${section.courseCode}-${sectionIndex}`}>
+                                <div className="assignment-details">
+                                  <strong>{section.courseCode} <small>Current assignment</small></strong>
+                                  <span><b>Day / time</b>{section.day || 'Unassigned'} · {section.timeBlock || 'Unassigned'}</span>
+                                  <span><b>Room</b>{section.roomNumber || 'Unassigned'}</span>
+                                  <span><b>Instructor</b>{section.instructorName || 'Unassigned'}</span>
+                                </div>
+                                <button className="conflict-edit-button" onClick={() => startEdit(section)} aria-label={`Edit assignment for ${section.courseCode}`}>Edit assignment <span aria-hidden="true">↗</span></button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="conflict-assignment-unavailable">Current assignment details are unavailable. Open the schedule to choose a course card to edit.</p>
+                        )}
+                        <div className="conflict-suggestion"><span aria-hidden="true">↳</span><div><b>Suggested action</b><p>{conflict.suggestedAction || 'Review the affected course assignments and choose a different room, time, or instructor.'}</p></div></div>
+                      </div>
+                    </article>
+                  )
+                })
               ) : validationStatus === 'valid' ? (
                 <div className="empty-state success-state" role="status">
                   <span className="empty-state-icon" aria-hidden="true">✓</span>
@@ -895,51 +1042,53 @@ export default function App() {
             </section>
           )}
           {view === "saved" && (
-            <section className="panel">
-              <div className="panel-title">
+            <section className="panel saved-panel">
+              <div className="saved-header">
                 <div>
+                  <span className="eyebrow">SCHEDULE HISTORY</span>
                   <h2>Saved schedule drafts</h2>
-                  <p>
-                    Open a previous schedule version and continue reviewing it.
-                  </p>
+                  <p>Reopen a saved version to review assignments and continue planning.</p>
                 </div>
-                <button onClick={loadDrafts}>↻ Refresh drafts</button>
+                <div className="saved-header-actions">
+                  <span className="saved-count">{filteredSavedDrafts.length} <small>of {savedDrafts.length} drafts</small></span>
+                  <button onClick={loadDrafts} disabled={draftsLoading}>{draftsLoading ? 'Refreshing…' : '↻ Refresh'}</button>
+                </div>
               </div>
               {draftsLoading ? (
                 <div className="empty-state" role="status" aria-live="polite"><span className="loading-spinner" aria-hidden="true" /> <h2>Loading saved drafts…</h2></div>
               ) : savedDrafts.length ? (
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Draft name</th>
-                      <th>Semester</th>
-                      <th>Status</th>
-                      <th>Violations</th>
-                      <th>Created</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {savedDrafts.map((item) => (
-                      <tr key={item.id}>
-                        <td>
-                          <b>{item.name}</b>
-                        </td>
-                        <td>{item.semester}</td>
-                        <td>{item.status}</td>
-                        <td>{item.requiredViolationCount}</td>
-                        <td>
-                          {item.createdAtUtc
-                            ? new Date(item.createdAtUtc).toLocaleString()
-                            : "—"}
-                        </td>
-                        <td>
-                          <button onClick={() => openDraft(item.id)}>Open</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <>
+                  <label className="saved-search"><span aria-hidden="true">⌕</span><input aria-label="Search saved drafts" placeholder="Search by draft name, semester, or status" value={savedDraftSearch} onChange={(event) => setSavedDraftSearch(event.target.value)} /></label>
+                  {filteredSavedDrafts.length ? (
+                    <div className="saved-draft-grid">
+                      {filteredSavedDrafts.map((item) => {
+                        const violationCount = Number(item.requiredViolationCount || 0)
+                        const normalizedStatus = String(item.status || 'Draft').toLowerCase()
+                        const statusLabel = item.status || 'Draft'
+                        const statusClass = normalizedStatus.includes('invalid') || normalizedStatus.includes('conflict') || normalizedStatus.includes('issue') ? 'saved-status-issues' : normalizedStatus === 'valid' || normalizedStatus.includes('validated') || normalizedStatus === 'ready' ? 'saved-status-valid' : 'saved-status-neutral'
+                        const createdDate = item.createdAtUtc ? new Date(item.createdAtUtc) : null
+                        const formattedDate = createdDate && !Number.isNaN(createdDate.getTime()) ? createdDate.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'Date unavailable'
+                        return (
+                          <article className="saved-draft-card" key={item.id || item._id}>
+                            <div className="saved-draft-topline">
+                              <span className="saved-draft-icon" aria-hidden="true">▤</span>
+                              <span className={`saved-status ${statusClass}`}><i aria-hidden="true" />{statusLabel}</span>
+                            </div>
+                            <h3>{item.name || 'Untitled schedule draft'}</h3>
+                            <span className="saved-semester">{item.semester || 'Semester not specified'}</span>
+                            <div className="saved-draft-metrics">
+                              <div className={violationCount ? 'has-violations' : 'no-violations'}><strong>{violationCount}</strong><span>{violationCount === 1 ? 'required violation' : 'required violations'}</span></div>
+                              <div><strong>{formattedDate}</strong><span>Saved date</span></div>
+                            </div>
+                            <button className="saved-open-button" onClick={() => openDraft(item.id || item._id)} disabled={!item.id && !item._id}>Open draft <span aria-hidden="true">→</span></button>
+                          </article>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <div className="saved-empty"><span className="empty-state-icon" aria-hidden="true">⌕</span><h3>No saved drafts match your search.</h3><p>Try a different draft name, semester, or status.</p></div>
+                  )}
+                </>
               ) : draftsLoaded ? (
                 <div className="empty-state">
                   <span className="empty-state-icon" aria-hidden="true">▣</span>
