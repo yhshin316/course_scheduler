@@ -3,6 +3,11 @@ import toast, { Toaster } from 'react-hot-toast'
 import "./App.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+const SCHEDULE_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+
+function formatScheduleTimeBlock(timeBlock, blocks = []) {
+  return blocks.find((block) => block.timeBlock === timeBlock)?.label || timeBlock || 'Unassigned'
+}
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -79,6 +84,7 @@ function getConflictExplanation(conflict) {
     ROOM_EQUIPMENT_MISSING: 'The selected room does not have all equipment required by the course.',
     ROOM_UNAVAILABLE: 'The room is not available during the selected day and time block.',
     ROOM_OVERLAP: 'The same room is assigned to multiple courses at the same time.',
+    INVALID_TIME_BLOCK: 'The selected time is not enabled for this semester and course type.',
   }
   return explanations[conflict.code] || `This assignment does not meet the ${conflict.category || 'scheduling'} rule. Review the details and suggested action below.`
 }
@@ -196,19 +202,25 @@ function ResourceTable({ title, description, headers, rows }) {
 
 export default function App() {
   const [semester, setSemester] = useState("Fall 2026");
+  const [semesterInput, setSemesterInput] = useState("Fall 2026");
   const [selectedOfferingIds, setSelectedOfferingIds] = useState([]);
   const [workspace, setWorkspace] = useState({
     offerings: [],
     instructors: [],
     rooms: [],
     constraints: [],
+    scheduleBlocks: [],
   });
   const [draft, setDraft] = useState(null);
   const [validationStatus, setValidationStatus] = useState('pending');
   const [savedDraftId, setSavedDraftId] = useState(null);
   const [conflicts, setConflicts] = useState([]);
   const [scheduleFilters, setScheduleFilters] = useState({ courseCode: '', instructorId: '', roomId: '', day: '', timeBlock: '', type: '', status: '' });
-  const [view, setView] = useState("planning");
+  const [view, setView] = useState(() => {
+    const requestedView = window.location.hash.slice(1)
+    return ['planning', 'schedule', 'conflicts', 'saved', 'print'].includes(requestedView) ? requestedView : 'planning'
+  });
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [instructorSearch, setInstructorSearch] = useState("");
   const [roomSearch, setRoomSearch] = useState("");
@@ -216,6 +228,15 @@ export default function App() {
   const [savedDraftSearch, setSavedDraftSearch] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [scheduleBlockDraft, setScheduleBlockDraft] = useState([]);
+  const [savingScheduleBlocks, setSavingScheduleBlocks] = useState(false);
+  const [instructorAvailabilityDraft, setInstructorAvailabilityDraft] = useState({});
+  const [savingInstructorAvailabilityId, setSavingInstructorAvailabilityId] = useState(null);
+  const [importFiles, setImportFiles] = useState([]);
+  const [importPreview, setImportPreview] = useState(null);
+  const [importSummary, setImportSummary] = useState(null);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importConfirming, setImportConfirming] = useState(false);
   const [validationLoading, setValidationLoading] = useState(false);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -236,8 +257,11 @@ export default function App() {
   const editDialogRef = useRef(null);
   const confirmationDialogRef = useRef(null);
   const confirmationCancelRef = useRef(null);
+  const mobileNavToggleRef = useRef(null);
+  const pageTitleRef = useRef(null);
   const modalReturnFocusRef = useRef(null);
   const modalWasOpenRef = useRef(false);
+  const draftsRequestRef = useRef(false);
   const closeEditModalRef = useRef(() => {});
   const [deletingDraftId, setDeletingDraftId] = useState(null);
   const [duplicatingDraftId, setDuplicatingDraftId] = useState(null);
@@ -249,15 +273,50 @@ export default function App() {
     timeBlock: "09:00-10:15",
   });
 
+  function navigateToView(nextView) {
+    if (!['planning', 'schedule', 'conflicts', 'saved', 'print'].includes(nextView)) return
+    const cameFromMobileMenu = mobileNavOpen && window.matchMedia('(max-width: 700px)').matches
+    setMobileNavOpen(false)
+    if (nextView === view) {
+      if (cameFromMobileMenu) pageTitleRef.current?.focus({ preventScroll: true })
+      return
+    }
+    window.history.pushState({ view: nextView }, '', `#${nextView}`)
+    setView(nextView)
+    if (cameFromMobileMenu) pageTitleRef.current?.focus({ preventScroll: true })
+  }
+
+  useEffect(() => {
+    const syncViewFromHistory = () => {
+      const requestedView = window.location.hash.slice(1)
+      setView(['planning', 'schedule', 'conflicts', 'saved', 'print'].includes(requestedView) ? requestedView : 'planning')
+      setMobileNavOpen(false)
+    }
+    window.addEventListener('popstate', syncViewFromHistory)
+    return () => window.removeEventListener('popstate', syncViewFromHistory)
+  }, [])
+
+  useEffect(() => {
+    if (!mobileNavOpen) return undefined
+    const closeMenuOnEscape = (event) => {
+      if (event.key === 'Escape') {
+        setMobileNavOpen(false)
+        mobileNavToggleRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', closeMenuOnEscape)
+    return () => window.removeEventListener('keydown', closeMenuOnEscape)
+  }, [mobileNavOpen])
+
   async function loadWorkspace() {
     setWorkspaceLoading(true);
     try {
-      const nextWorkspace = await request(
-        `/api/planning/workspace/${encodeURIComponent(semester)}`,
-      )
       // The workspace endpoint includes enabled constraints for planning. Fetch
       // the full list separately so users can also see and re-enable disabled rules.
-      const constraints = await request('/api/constraints')
+      const [nextWorkspace, constraints] = await Promise.all([
+        request(`/api/planning/workspace/${encodeURIComponent(semester)}`),
+        request('/api/constraints'),
+      ])
       setWorkspace({ ...nextWorkspace, constraints })
       setConnected(true);
       setMessage(`Planning data loaded for ${semester}.`);
@@ -267,6 +326,136 @@ export default function App() {
     } finally {
       setWorkspaceLoading(false);
     }
+  }
+
+  async function saveScheduleBlocks() {
+    setSavingScheduleBlocks(true)
+    try {
+      const configuration = await request(`/api/planning/blocks/${encodeURIComponent(semester)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ blocks: scheduleBlockDraft }),
+      })
+      setWorkspace((current) => ({ ...current, scheduleBlocks: configuration.blocks || [] }))
+      toast.success(`Approved blocks saved for ${semester}.`)
+    } catch (error) {
+      toast.error(`Could not save scheduling blocks: ${error.message}`)
+    } finally {
+      setSavingScheduleBlocks(false)
+    }
+  }
+
+  function updateScheduleBlock(timeBlock, update) {
+    setScheduleBlockDraft((current) => current.map((block) => block.timeBlock === timeBlock ? update(block) : block))
+  }
+
+  function toggleInstructorAvailability(instructorId, selection) {
+    setInstructorAvailabilityDraft((current) => {
+      const selected = current[instructorId] || []
+      return { ...current, [instructorId]: selected.includes(selection) ? selected.filter((item) => item !== selection) : [...selected, selection] }
+    })
+  }
+
+  async function saveInstructorAvailability(instructor) {
+    const instructorId = instructor.id || instructor._id
+    const availableBlocks = instructorAvailabilityDraft[instructorId] || []
+    if (!availableBlocks.length) {
+      toast.error('Select at least one available day and block before saving.')
+      return
+    }
+    setSavingInstructorAvailabilityId(instructorId)
+    try {
+      const saved = await request(`/api/planning/instructors/${encodeURIComponent(instructorId)}/availability/${encodeURIComponent(semester)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ availableBlocks }),
+      })
+      setWorkspace((current) => ({
+        ...current,
+        instructors: current.instructors.map((item) => (item.id || item._id) === instructorId ? { ...item, semesterAvailableBlocks: saved.availableBlocks } : item),
+      }))
+      toast.success(`${instructor.name || 'Instructor'} availability saved for ${semester}.`)
+    } catch (error) {
+      toast.error(`Could not save instructor availability: ${error.message}`)
+    } finally {
+      setSavingInstructorAvailabilityId(null)
+    }
+  }
+
+  async function previewScheduleImport() {
+    if (!importFiles.length) {
+      toast.error('Choose one Excel workbook or one or more CSV files first.')
+      return
+    }
+    const formData = new FormData()
+    formData.append('semester', semester)
+    importFiles.forEach((file) => formData.append('files', file))
+    setImportLoading(true)
+    setImportSummary(null)
+    try {
+      const response = await fetch(`${API_BASE}/api/planning/import/preview`, { method: 'POST', body: formData })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result?.message || 'Unable to read the selected import files.')
+      setImportPreview(result)
+    } catch (error) {
+      toast.error(`Could not preview import: ${error.message}`)
+    } finally {
+      setImportLoading(false)
+    }
+  }
+
+  async function confirmScheduleImport() {
+    if (!importPreview?.canConfirm) return
+    setImportConfirming(true)
+    try {
+      const result = await request('/api/planning/import/confirm', {
+        method: 'POST',
+        body: JSON.stringify(importPreview.batch),
+      })
+      setImportSummary({ ...result, warnings: importPreview.warnings || [], errors: [...(importPreview.errors || []), ...(result.errors || [])] })
+      setImportPreview(null)
+      setImportFiles([])
+      toast.success('Valid scheduling data was imported.')
+      await loadWorkspace()
+    } catch (error) {
+      toast.error(`Could not confirm import: ${error.message}`)
+    } finally {
+      setImportConfirming(false)
+    }
+  }
+
+  function downloadImportCsvTemplate(kind) {
+    const templates = {
+      Courses: {
+        headers: ['CourseCode', 'CourseTitle', 'Credits', 'HistoricalEnrollment', 'PredictedEnrollment', 'RequiresLab', 'RequiredEquipment', 'CrossListedWith', 'CoLocationGroup', 'InstructorName', 'RoomNumber'],
+        row: ['CSI 501', 'Algorithms', '3', '40', '42', 'false', 'Projector', '', '', '', ''],
+      },
+      Instructors: {
+        headers: ['Name', 'QualifiedCourses', 'PreferredCourses', 'MaximumCourseLoad', 'PrefersBackToBack'],
+        row: ['Dr. Jordan Lee', 'CSI 501; CSI 502', 'CSI 501', '3', 'false'],
+      },
+      Rooms: {
+        headers: ['RoomNumber', 'Building', 'Capacity', 'RoomType', 'Equipment'],
+        row: ['D-101', 'Draper', '48', 'Lecture', 'Projector; Whiteboard'],
+      },
+      InstructorAvailability: {
+        headers: ['InstructorName', 'Day', 'TimeBlock'],
+        row: ['Dr. Jordan Lee', 'Monday', '09:20-10:10'],
+      },
+      RoomAvailability: {
+        headers: ['RoomNumber', 'Day', 'TimeBlock'],
+        row: ['D-101', 'Monday', '09:20-10:10'],
+      },
+    }
+    const template = templates[kind]
+    const quote = (value) => `"${String(value).replaceAll('"', '""')}"`
+    const content = [template.headers, template.row].map((row) => row.map(quote).join(',')).join('\r\n')
+    const url = URL.createObjectURL(new Blob([content], { type: 'text/csv;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${kind.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase()}-template.csv`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
   async function toggleConstraint(item) {
@@ -296,6 +485,31 @@ export default function App() {
   useEffect(() => {
     loadWorkspace();
   }, [semester]);
+
+  useEffect(() => setSemesterInput(semester), [semester]);
+
+  function commitSemesterInput() {
+    const nextSemester = semesterInput.trim()
+    if (!nextSemester) {
+      setSemesterInput(semester)
+      return
+    }
+    if (nextSemester !== semester) {
+      setSelectedOfferingIds([])
+      setSemester(nextSemester)
+    }
+  }
+
+  useEffect(() => {
+    if (Array.isArray(workspace.scheduleBlocks)) setScheduleBlockDraft(workspace.scheduleBlocks)
+  }, [workspace.scheduleBlocks]);
+
+  useEffect(() => {
+    setInstructorAvailabilityDraft(Object.fromEntries(workspace.instructors.map((item) => [
+      item.id || item._id,
+      item.semesterAvailableBlocks ?? item.availableBlocks ?? [],
+    ]).filter(([id]) => id)))
+  }, [workspace.instructors]);
 
   useEffect(() => {
     if (!draft || savedDraftId) return undefined
@@ -356,7 +570,9 @@ export default function App() {
     return () => document.removeEventListener('keydown', keepFocusInDialog)
   }, [confirmation, editingSection])
 
-  async function loadDrafts() {
+  async function loadDrafts(force = false) {
+    if (draftsRequestRef.current || (draftsLoaded && !force)) return
+    draftsRequestRef.current = true
     setDraftsLoading(true)
     try {
       setSavedDrafts(await request("/api/schedules/drafts"));
@@ -365,8 +581,17 @@ export default function App() {
       setMessage(`Could not load saved drafts: ${error.message}`);
     } finally {
       setDraftsLoading(false)
+      draftsRequestRef.current = false
     }
   }
+
+  useEffect(() => {
+    if (view === 'saved') loadDrafts()
+    if (view !== 'print') {
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      window.scrollTo({ top: 0, behavior: reduceMotion ? 'instant' : 'smooth' })
+    }
+  }, [view])
 
   function closeEditModal() {
     if (loading) return
@@ -403,7 +628,7 @@ export default function App() {
 
       setDraft(saved)
       setSavedDraftId(saved.id || saved._id || true)
-      await loadDrafts()
+      await loadDrafts(true)
 
       toast.dismiss(toastId)
       toast.success('Draft saved successfully.')
@@ -425,7 +650,7 @@ export default function App() {
       setValidationStatus('pending')
       setConflicts([])
       setScheduleFilters({ courseCode: '', instructorId: '', roomId: '', day: '', timeBlock: '', type: '', status: '' })
-      setView("schedule");
+      navigateToView("schedule");
       setMessage("Saved draft opened.");
       try {
         setValidationLoading(true)
@@ -612,7 +837,8 @@ export default function App() {
   }
   const filteredInstructors = useMemo(() => workspace.instructors.filter((item) => {
     const qualified = Array.isArray(item.qualifiedCourses) ? item.qualifiedCourses.join(' ') : (item.qualifiedCourses || '')
-    const blocks = Array.isArray(item.availableBlocks) ? item.availableBlocks.join(' ') : (item.availableBlocks || '')
+    const availability = item.semesterAvailableBlocks ?? item.availableBlocks
+    const blocks = Array.isArray(availability) ? availability.join(' ') : (availability || '')
     return `${item.name || ''} ${qualified} ${blocks}`.toLowerCase().includes(instructorSearch.toLowerCase())
   }), [workspace.instructors, instructorSearch]);
   const filteredRooms = useMemo(() => workspace.rooms.filter((item) => {
@@ -628,9 +854,13 @@ export default function App() {
     `${item.name || ''} ${item.semester || ''} ${item.status || ''} ${item.createdAtUtc || ''}`
       .toLowerCase().includes(savedDraftSearch.toLowerCase())
   )), [savedDrafts, savedDraftSearch]);
-  const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+  const days = SCHEDULE_DAYS;
+  const scheduleDays = [...days, 'Asynchronous'];
+  const enabledInstructorBlocks = (workspace.scheduleBlocks || []).filter((block) => block.enabled && block.courseTypes?.length)
+  const editCourseType = editingSection?.isLab ? 'Laboratory' : 'Lecture'
+  const editAllowedBlocks = (workspace.scheduleBlocks || []).filter((block) => block.enabled && block.courseTypes?.includes(editCourseType))
   const scheduledCount = draft?.sections?.length || 0
-  const assignedCount = draft?.sections?.filter((section) => section.instructorId && section.roomId && section.day && section.timeBlock).length || 0
+  const assignedCount = draft?.sections?.filter((section) => section.instructorId && (section.roomId || section.timeBlock === 'ASYNC') && section.day && section.timeBlock).length || 0
   const conflictCourseCodes = useMemo(() => {
     const codes = new Set()
     for (const item of conflicts) {
@@ -671,7 +901,7 @@ export default function App() {
     const occupiedRoomSlots = new Set(sections
       .filter((section) => section.roomId && section.day && section.timeBlock)
       .map((section) => `${section.roomId}|${section.day}|${section.timeBlock}`)).size
-    const coursesPerDay = days.map((day) => ({ day, count: sections.filter((section) => section.day === day).length }))
+    const coursesPerDay = [...days, 'Asynchronous'].map((day) => ({ day, count: sections.filter((section) => section.day === day).length }))
     const periods = [...new Set(sections.map((section) => section.timeBlock).filter(Boolean))]
       .map((timeBlock) => ({ timeBlock, count: sections.filter((section) => section.timeBlock === timeBlock).length }))
       .sort((left, right) => right.count - left.count || left.timeBlock.localeCompare(right.timeBlock))
@@ -686,7 +916,7 @@ export default function App() {
       availableRoomSlots,
       coursesPerDay,
       laboratoryCourses: sections.filter((section) => section.isLab).length,
-      unassignedRooms: sections.filter((section) => !section.roomId).length,
+      unassignedRooms: sections.filter((section) => !section.roomId && section.timeBlock !== 'ASYNC').length,
       unassignedInstructors: sections.filter((section) => !section.instructorId).length,
       periods,
       peakPeriod: periods[0] || null,
@@ -729,7 +959,7 @@ export default function App() {
       setSavedDraftId(null)
       setConflicts([])
       setScheduleFilters({ courseCode: '', instructorId: '', roomId: '', day: '', timeBlock: '', type: '', status: '' })
-      setView('schedule')
+      navigateToView('schedule')
 
       try {
         const validation = await request('/api/schedules/validate', { method: 'POST', body: JSON.stringify({ draft: generatedDraft }) })
@@ -771,10 +1001,10 @@ export default function App() {
 
       if (result.isValid) {
         toast.success('Schedule passed validation.')
-        setView('schedule')
+        navigateToView('schedule')
       } else {
         toast.error(`${result.errors.length} conflict(s) found.`)
-        setView('conflicts')
+        navigateToView('conflicts')
       }
     } catch (error) {
       toast.dismiss(toastId)
@@ -818,24 +1048,97 @@ export default function App() {
 
   function openPrintView(exportPdf = false) {
     if (!draft) return
-    setView('print')
+    navigateToView('print')
     if (exportPdf) window.setTimeout(() => window.print(), 250)
   }
 
-  function startEdit(section) {
+  function getConflictQuickFixes(conflict, section) {
+    if (!draft || !section) return []
+    const sections = draft.sections || []
+    const otherSections = sections.filter((item) => item.courseCode !== section.courseCode)
+    const normalized = (value) => String(value || '').trim().toLowerCase()
+    const availabilityMatches = (blocks, day, timeBlock) => {
+      const values = Array.isArray(blocks) ? blocks : (blocks ? [blocks] : [])
+      return values.some((block) => {
+        const text = normalized(block)
+        return text === normalized(`${day} ${timeBlock}`) || (text.includes(normalized(day)) && text.includes(normalized(timeBlock)))
+      })
+    }
+    const requiredEquipment = Array.isArray(section.requiredEquipment) ? section.requiredEquipment : []
+    const isRoomSuitable = (room) =>
+      Number(room.capacity || 0) >= Number(section.predictedEnrollment || 0) &&
+      (!section.isLab || /lab/i.test(room.roomType || '')) &&
+      requiredEquipment.every((equipment) => (room.equipment || []).some((available) => normalized(available) === normalized(equipment)))
+    const roomIsFree = (roomId, day, timeBlock) => !otherSections.some((item) => item.roomId === roomId && item.day === day && item.timeBlock === timeBlock)
+    const instructorIsFree = (instructorId, day, timeBlock) => !otherSections.some((item) => item.instructorId === instructorId && item.day === day && item.timeBlock === timeBlock)
+    const code = String(conflict.code || '').toUpperCase()
+    const fixes = []
+
+    const suitableRooms = workspace.rooms.filter((room) => isRoomSuitable(room) &&
+      availabilityMatches(room.availableBlocks, section.day, section.timeBlock) && roomIsFree(room.id, section.day, section.timeBlock) && room.id !== section.roomId)
+    for (const room of suitableRooms.slice(0, 2)) fixes.push({
+      label: `Assign ${room.roomNumber}`,
+      assignment: { roomId: room.id },
+    })
+
+    const qualifiedInstructors = workspace.instructors.filter((instructor) => {
+      const qualifiedCourses = Array.isArray(instructor.qualifiedCourses) ? instructor.qualifiedCourses : [instructor.qualifiedCourses].filter(Boolean)
+      const load = otherSections.filter((item) => item.instructorId === instructor.id).length
+      return qualifiedCourses.some((course) => normalized(course) === normalized(section.courseCode)) &&
+        availabilityMatches(instructor.semesterAvailableBlocks ?? instructor.availableBlocks, section.day, section.timeBlock) &&
+        instructorIsFree(instructor.id, section.day, section.timeBlock) &&
+        load < Number(instructor.maximumCourseLoad ?? Infinity) && instructor.id !== section.instructorId
+    })
+    for (const instructor of qualifiedInstructors.slice(0, 2)) fixes.push({
+      label: `Assign ${instructor.name}`,
+      assignment: { instructorId: instructor.id },
+    })
+
+    const courseType = section.isLab ? 'Laboratory' : 'Lecture'
+    const candidateDays = SCHEDULE_DAYS
+    const candidateTimes = (workspace.scheduleBlocks || []).filter((block) => block.enabled && block.courseTypes?.includes(courseType)).map((block) => block.timeBlock)
+    for (const day of candidateDays) {
+      for (const timeBlock of candidateTimes) {
+        if (day === section.day && timeBlock === section.timeBlock) continue
+        const assignedRoom = workspace.rooms.find((room) => room.id === section.roomId)
+        const assignedInstructor = workspace.instructors.find((instructor) => instructor.id === section.instructorId)
+        if (section.roomId && (!assignedRoom || !isRoomSuitable(assignedRoom) || !availabilityMatches(assignedRoom.availableBlocks, day, timeBlock) || !roomIsFree(section.roomId, day, timeBlock))) continue
+        if (section.instructorId && (!assignedInstructor || !availabilityMatches(assignedInstructor.semesterAvailableBlocks ?? assignedInstructor.availableBlocks, day, timeBlock) || !instructorIsFree(section.instructorId, day, timeBlock))) continue
+        const label = formatScheduleTimeBlock(timeBlock, workspace.scheduleBlocks)
+        fixes.push({ label: `Move to ${day} ${label}`, assignment: { day, timeBlock } })
+        if (fixes.length >= 5) break
+      }
+      if (fixes.length >= 5) break
+    }
+
+    const roomConflict = code.startsWith('ROOM_')
+    const instructorConflict = code.startsWith('INSTRUCTOR_')
+    const ranked = fixes.sort((left, right) => {
+      const roomFirst = roomConflict ? left.assignment.roomId : instructorConflict ? left.assignment.instructorId : null
+      const rightRoomFirst = roomConflict ? right.assignment.roomId : instructorConflict ? right.assignment.instructorId : null
+      return Number(Boolean(rightRoomFirst)) - Number(Boolean(roomFirst))
+    })
+    return ranked.slice(0, 3)
+  }
+
+  function startEdit(section, suggestedAssignment = {}) {
     setEditingSection(section);
     setEditingConflicts([]);
     setEditForm({
-      instructorId: section.instructorId || "",
-      roomId: section.roomId || "",
-      day: section.day || "Monday",
-      timeBlock: section.timeBlock || "09:00-10:15",
+      instructorId: suggestedAssignment.instructorId ?? section.instructorId ?? "",
+      roomId: suggestedAssignment.roomId ?? section.roomId ?? "",
+      day: suggestedAssignment.day ?? section.day ?? "Monday",
+      timeBlock: suggestedAssignment.timeBlock ?? section.timeBlock ?? editAllowedBlocks[0]?.timeBlock ?? "",
     });
   }
 
   async function saveSectionEdit() {
     if (!draft || !editingSection) {
       toast.error('Please select an assignment first.')
+      return
+    }
+    if (!editAllowedBlocks.some((block) => block.timeBlock === editForm.timeBlock)) {
+      toast.error('Select an enabled university block for this course type before saving.')
       return
     }
 
@@ -876,7 +1179,7 @@ export default function App() {
       if (result.isValid) {
         setEditingSection(null)
         toast.success('Assignment updated successfully.')
-        setView('schedule')
+        navigateToView('schedule')
       } else {
         toast.error(`${result.errors?.length || 1} conflict(s) found. Review the warning and adjust this assignment.`)
       }
@@ -924,7 +1227,7 @@ export default function App() {
           <span><b>Instructor</b>{editingSection.instructorName || 'Unassigned'}</span>
           <span><b>Room</b>{editingSection.roomNumber || 'Unassigned'}</span>
           <span><b>Day</b>{editingSection.day || 'Unassigned'}</span>
-          <span><b>Time</b>{editingSection.timeBlock || 'Unassigned'}</span>
+          <span><b>Time</b>{formatScheduleTimeBlock(editingSection.timeBlock, workspace.scheduleBlocks)}</span>
         </div>
 
         {editingConflicts.length > 0 && (
@@ -988,18 +1291,19 @@ export default function App() {
             Day
             <select
               value={editForm.day}
-              onChange={(event) =>
-                setEditForm({
-                  ...editForm,
-                  day: event.target.value,
-                })
-              }
+              onChange={(event) => {
+                const day = event.target.value
+                const asyncBlock = editAllowedBlocks.find((block) => block.category === 'Asynchronous')
+                const physicalBlock = editAllowedBlocks.find((block) => block.category !== 'Asynchronous')
+                setEditForm({ ...editForm, day, timeBlock: day === 'Asynchronous' ? (asyncBlock?.timeBlock || editForm.timeBlock) : editForm.timeBlock === asyncBlock?.timeBlock ? (physicalBlock?.timeBlock || '') : editForm.timeBlock, roomId: day === 'Asynchronous' ? '' : editForm.roomId })
+              }}
             >
               {days.map((day) => (
                 <option value={day} key={day}>
                   {day}
                 </option>
               ))}
+              {editAllowedBlocks.some((block) => block.category === 'Asynchronous') && <option value="Asynchronous">Asynchronous</option>}
             </select>
           </label>
 
@@ -1007,23 +1311,24 @@ export default function App() {
             Time block
             <select
               value={editForm.timeBlock}
-              onChange={(event) =>
-                setEditForm({
-                  ...editForm,
-                  timeBlock: event.target.value,
-                })
-              }
+              onChange={(event) => {
+                const timeBlock = event.target.value
+                const selectedBlock = editAllowedBlocks.find((block) => block.timeBlock === timeBlock)
+                const isAsync = selectedBlock?.category === 'Asynchronous'
+                setEditForm({ ...editForm, timeBlock, day: isAsync ? 'Asynchronous' : editForm.day === 'Asynchronous' ? 'Monday' : editForm.day, roomId: isAsync ? '' : editForm.roomId })
+              }}
             >
-              {[
-                '09:00-10:15',
-                '10:30-11:45',
-                '13:00-14:15',
-                '15:00-16:15',
-              ].map((time) => (
-                <option value={time} key={time}>
-                  {time}
-                </option>
-              ))}
+              {editingSection.timeBlock && !editAllowedBlocks.some((block) => block.timeBlock === editingSection.timeBlock) && (
+                <option value={editingSection.timeBlock} disabled>{editingSection.timeBlock} · not approved</option>
+              )}
+              {['Normal', 'Evening', 'Asynchronous'].map((category) => {
+                const blocks = editAllowedBlocks.filter((block) => block.category === category)
+                return blocks.length ? (
+                  <optgroup label={category === 'Normal' ? 'Daytime' : category} key={category}>
+                    {blocks.map((block) => <option value={block.timeBlock} key={block.timeBlock}>{block.label}</option>)}
+                  </optgroup>
+                ) : null
+              })}
             </select>
           </label>
         </div>
@@ -1109,34 +1414,48 @@ export default function App() {
           </section>
         </div>
       )}
+      <a className="skip-to-content" href="#main-content">Skip to main content</a>
       <div className="shell">
         <aside className="sidebar">
           <div className="brand">
-            <b>S</b>
-            <div>
-              <strong>ScheduleSpark</strong>
-              <small>Academic planning assistant</small>
-            </div>
+            <img src="/schedulespark-logo.svg" alt="ScheduleSpark" />
+            <small>Academic scheduling workspace</small>
           </div>
-          <nav aria-label="Workspace sections">
+          <button
+            ref={mobileNavToggleRef}
+            id="mobile-navigation-toggle"
+            className="mobile-nav-toggle"
+            type="button"
+            aria-expanded={mobileNavOpen}
+            aria-controls="workspace-navigation"
+            onClick={() => setMobileNavOpen((open) => !open)}
+          >
+            <span className={`hamburger-icon${mobileNavOpen ? ' is-open' : ''}`} aria-hidden="true"><i></i><i></i><i></i></span>
+            <span>{mobileNavOpen ? 'Close menu' : 'Menu'}</span>
+          </button>
+          <nav
+            id="workspace-navigation"
+            className={mobileNavOpen ? 'is-open' : ''}
+            aria-label="Workspace sections"
+          >
             <button
               className={view === "planning" ? "active" : ""}
               aria-current={view === 'planning' ? 'page' : undefined}
-              onClick={() => setView("planning")}
+              onClick={() => navigateToView("planning")}
             >
               ▦ <span>Planning Workspace</span>
             </button>
             <button
               className={view === "schedule" ? "active" : ""}
               aria-current={view === 'schedule' ? 'page' : undefined}
-              onClick={() => setView("schedule")}
+              onClick={() => navigateToView("schedule")}
             >
               ▤ <span>Schedule Builder</span>
             </button>
             <button
               className={view === "conflicts" ? "active" : ""}
               aria-current={view === 'conflicts' ? 'page' : undefined}
-              onClick={() => setView("conflicts")}
+              onClick={() => navigateToView("conflicts")}
             >
               ⚠ <span>Conflict Review</span>
               {conflicts.length > 0 && <em>{conflicts.length}</em>}
@@ -1145,7 +1464,7 @@ export default function App() {
               className={view === "saved" ? "active" : ""}
               aria-current={view === 'saved' ? 'page' : undefined}
               onClick={() => {
-                setView("saved");
+                navigateToView("saved");
                 loadDrafts();
               }}
             >
@@ -1163,7 +1482,7 @@ export default function App() {
           <header>
             <div>
               <label className="eyebrow">ACADEMIC SCHEDULING</label>
-              <h1>
+              <h1 ref={pageTitleRef} tabIndex={-1}>
                 {view === "planning"
                   ? "Planning Workspace"
                   : view === "schedule"
@@ -1182,16 +1501,15 @@ export default function App() {
             <div className="controls">
               <label>
                 Semester
-                <select
-                  value={semester}
-                  onChange={(e) => {
-                    setSelectedOfferingIds([])
-                    setSemester(e.target.value)
-                  }}
-                >
-                  <option>Fall 2026</option>
-                  <option>Spring 2027</option>
-                </select>
+                <input
+                  list="semester-options"
+                  value={semesterInput}
+                  onChange={(event) => setSemesterInput(event.target.value)}
+                  onBlur={commitSemesterInput}
+                  onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }}
+                  aria-label="Semester. Choose a preset or type a future semester."
+                />
+                <datalist id="semester-options"><option value="Fall 2026" /><option value="Spring 2027" /><option value="Fall 2027" /><option value="Spring 2028" /></datalist>
               </label>
               <button onClick={loadWorkspace} disabled={workspaceLoading} aria-label="Refresh planning workspace">{workspaceLoading ? 'Loading…' : '↻ Refresh'}</button>
             </div>
@@ -1204,7 +1522,7 @@ export default function App() {
               ...(validationStatus !== 'pending' ? ['conflicts'] : []),
               ...(savedDraftId ? ['saved'] : []),
             ]}
-            onSelect={setView}
+            onSelect={navigateToView}
           />}
           {view !== 'print' && <section className="stats">
             <Stat label="Course offerings" value={workspace.offerings.length} />
@@ -1216,6 +1534,10 @@ export default function App() {
               danger={conflicts.length > 0}
             />
           </section>}
+          <div className="navigation-loading" aria-live="polite" aria-atomic="true">
+            {workspaceLoading && <span><i className="loading-spinner" aria-hidden="true" /> Updating planning data…</span>}
+          </div>
+          <div id="main-content" key={view} className="view-transition" tabIndex={-1} aria-busy={workspaceLoading}>
           {view === "planning" && (
             <>
               <div className="planning-tabs" role="group" aria-label="Planning data sections">
@@ -1224,6 +1546,8 @@ export default function App() {
                   ["instructors", "Instructors"],
                   ["rooms", "Rooms & Labs"],
                   ["constraints", "Constraints"],
+                  ["timeblocks", "University Blocks"],
+                  ["import", "Import Data"],
                 ].map(([key, label]) => (
                   <button
                     className={planningTab === key ? "selected" : ""}
@@ -1364,8 +1688,9 @@ export default function App() {
                   ) : filteredInstructors.length ? (
                     <div className="instructor-grid">
                       {filteredInstructors.map((item) => {
+                        const instructorId = item.id || item._id
                         const qualifiedCourses = Array.isArray(item.qualifiedCourses) ? item.qualifiedCourses : (item.qualifiedCourses ? [item.qualifiedCourses] : [])
-                        const availableBlocks = Array.isArray(item.availableBlocks) ? item.availableBlocks : (item.availableBlocks ? [item.availableBlocks] : [])
+                        const availableBlocks = instructorAvailabilityDraft[instructorId] || []
                         const initials = (item.name || 'Instructor').split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase()
                         return (
                           <article className="instructor-card" key={item.id || item.name}>
@@ -1379,8 +1704,27 @@ export default function App() {
                               {qualifiedCourses.length ? <div className="instructor-tags">{qualifiedCourses.map((course) => <span className="instructor-tag" key={course}>{course}</span>)}</div> : <p className="instructor-missing">No course qualifications listed</p>}
                             </div>
                             <div className="instructor-card-section availability-section">
-                              <span className="instructor-section-label">AVAILABLE BLOCKS <small>{availableBlocks.length}</small></span>
-                              {availableBlocks.length ? <div className="availability-list">{availableBlocks.map((block, index) => <span className="availability-block" key={`${block}-${index}`}><i aria-hidden="true" />{block}</span>)}</div> : <p className="instructor-missing">Availability not specified</p>}
+                              <span className="instructor-section-label">{semester.toUpperCase()} AVAILABILITY</span>
+                              {enabledInstructorBlocks.length ? (
+                                <details className="instructor-availability-disclosure">
+                                  <summary>Choose days and blocks <span>{availableBlocks.length} selected</span></summary>
+                                  <div className="instructor-availability-grid">
+                                    {[...days, 'Asynchronous'].map((day) => {
+                                      const dayBlocks = enabledInstructorBlocks.filter((block) => block.category === 'Asynchronous' ? day === 'Asynchronous' : day !== 'Asynchronous')
+                                      return dayBlocks.length ? (
+                                        <fieldset className="instructor-availability-day" key={day}>
+                                          <legend>{day}</legend>
+                                          {dayBlocks.map((block) => {
+                                            const selection = `${day} ${block.timeBlock}`
+                                            return <label key={block.timeBlock}><input type="checkbox" checked={availableBlocks.includes(selection)} onChange={() => toggleInstructorAvailability(instructorId, selection)} /><span>{block.label} <small>{block.category === 'Normal' ? 'Daytime' : block.category}</small></span></label>
+                                          })}
+                                        </fieldset>
+                                      ) : null
+                                    })}
+                                  </div>
+                                </details>
+                              ) : <p className="instructor-missing">Enable at least one approved block in University Blocks before setting availability.</p>}
+                              <button className="save-instructor-availability" type="button" onClick={() => saveInstructorAvailability(item)} disabled={workspaceLoading || savingInstructorAvailabilityId === instructorId}>{savingInstructorAvailabilityId === instructorId ? 'Saving availability…' : `Save availability for ${semester}`}</button>
                             </div>
                           </article>
                         )
@@ -1443,6 +1787,42 @@ export default function App() {
                   )}
                 </section>
               )}
+              {planningTab === "timeblocks" && (
+                <section className="panel schedule-block-panel">
+                  <div className="panel-title">
+                    <div>
+                      <span className="eyebrow">SEMESTER CONFIGURATION · {semester.toUpperCase()}</span>
+                      <h2>University scheduling blocks</h2>
+                      <p>Enable approved blocks and choose whether each can be used for lectures, laboratories, or both. Block times are fixed by the university.</p>
+                    </div>
+                    <button className="primary" type="button" onClick={saveScheduleBlocks} disabled={workspaceLoading || savingScheduleBlocks || !scheduleBlockDraft.length}>
+                      {savingScheduleBlocks && <span className="inline-spinner" aria-hidden="true" />}
+                      {savingScheduleBlocks ? 'Saving blocks…' : 'Save block settings'}
+                    </button>
+                  </div>
+                  {workspaceLoading ? (
+                    <div className="constraint-empty" role="status"><span className="loading-spinner" aria-hidden="true" /><h3>Loading semester blocks…</h3></div>
+                  ) : (
+                    <div className="schedule-block-list">
+                      {scheduleBlockDraft.map((block) => (
+                        <article className={`schedule-block-row${block.enabled ? '' : ' is-disabled'}`} key={block.timeBlock}>
+                          <div className="schedule-block-main">
+                            <label className="schedule-block-enable"><input type="checkbox" checked={Boolean(block.enabled)} onChange={(event) => updateScheduleBlock(block.timeBlock, (current) => ({ ...current, enabled: event.target.checked }))} /><span>{block.label}</span></label>
+                            <span className={`schedule-block-category ${String(block.category).toLowerCase()}`}>{block.category === 'Normal' ? 'Daytime' : block.category}</span>
+                          </div>
+                          <fieldset disabled={!block.enabled}>
+                            <legend>Available for</legend>
+                            {['Lecture', 'Laboratory'].map((courseType) => (
+                              <label key={courseType}><input type="checkbox" disabled={block.enabled && block.courseTypes?.length === 1 && block.courseTypes.includes(courseType)} checked={block.courseTypes?.includes(courseType) || false} onChange={(event) => updateScheduleBlock(block.timeBlock, (current) => ({ ...current, courseTypes: event.target.checked ? [...new Set([...(current.courseTypes || []), courseType])] : (current.courseTypes || []).filter((item) => item !== courseType) }))} />{courseType}</label>
+                            ))}
+                          </fieldset>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                  <p className="schedule-block-note">These settings apply to {semester}. Choose blocks that match instructor and room availability for this semester.</p>
+                </section>
+              )}
               {planningTab === "constraints" && (
                 <section className="panel constraint-panel">
                   <div className="constraint-header">
@@ -1495,6 +1875,80 @@ export default function App() {
                     </div>
                   ) : (
                     <div className="constraint-empty"><span className="empty-state-icon" aria-hidden="true">⌕</span><h3>{workspace.constraints.length ? 'No rules match your search.' : 'No scheduling constraints found.'}</h3><p>{workspace.constraints.length ? 'Try a different rule name, type, or keyword.' : 'Scheduling rules will appear here when they are available.'}</p></div>
+                  )}
+                </section>
+              )}
+              {planningTab === "import" && (
+                <section className="panel schedule-import-panel">
+                  <div className="panel-title">
+                    <div>
+                      <span className="eyebrow">DATA INTAKE · {semester.toUpperCase()}</span>
+                      <h2>Import scheduling data</h2>
+                      <p>Upload a workbook or matching CSV files. Review the mapped rows and validation issues before saving anything.</p>
+                    </div>
+                  </div>
+                  <div className="import-upload-row">
+                    <label className="import-file-picker">CSV files or Excel workbook (.xlsx)
+                      <input type="file" accept=".csv,.xlsx" multiple onChange={(event) => { setImportFiles(Array.from(event.target.files || [])); setImportPreview(null); setImportSummary(null) }} />
+                    </label>
+                    <span>{importFiles.length ? importFiles.map((file) => file.name).join(', ') : 'No files selected'}</span>
+                    <button className="primary" type="button" onClick={previewScheduleImport} disabled={importLoading || !importFiles.length} aria-busy={importLoading}>
+                      {importLoading && <span className="inline-spinner" aria-hidden="true" />}
+                      {importLoading ? 'Reading and validating…' : 'Preview import'}
+                    </button>
+                  </div>
+                  <details className="import-format-guide">
+                    <summary>Sample format and column guide</summary>
+                    <p>Download CSV examples below, or use one Excel workbook with sheets named <b>Courses</b>, <b>Instructors</b>, <b>Rooms</b>, <b>InstructorAvailability</b>, and <b>RoomAvailability</b>. Each sheet uses the same headers as its CSV template. The selected semester ({semester}) is applied to imported courses and availability.</p>
+                    <div className="import-template-buttons">
+                      {['Courses', 'Instructors', 'Rooms', 'InstructorAvailability', 'RoomAvailability'].map((kind) => <button type="button" key={kind} onClick={() => downloadImportCsvTemplate(kind)}>Download {kind.replace(/([a-z])([A-Z])/g, '$1 $2')} CSV</button>)}
+                    </div>
+                    <div className="import-format-notes">
+                      <p><b>Courses:</b> CourseCode, CourseTitle, Credits, HistoricalEnrollment, PredictedEnrollment, RequiresLab, RequiredEquipment, CrossListedWith, CoLocationGroup, InstructorName, RoomNumber</p>
+                      <p><b>Instructors:</b> Name, QualifiedCourses, PreferredCourses, MaximumCourseLoad, PrefersBackToBack</p>
+                      <p><b>Rooms:</b> RoomNumber, Building, Capacity, RoomType, Equipment</p>
+                      <p><b>Availability sheets:</b> InstructorName or RoomNumber, Day, TimeBlock. Use an approved time block value such as <code>09:20-10:10</code>. Asynchronous instructor availability uses <code>Asynchronous</code> and <code>ASYNC</code>.</p>
+                      <small>Separate qualified courses, preferred courses, or equipment items with semicolons. RequiresLab and PrefersBackToBack accept true/false, yes/no, or 1/0. Unrecognized optional InstructorName or RoomNumber references appear as warnings.</small>
+                    </div>
+                  </details>
+                  {importPreview && (
+                    <div className="import-review" aria-live="polite">
+                      <div className="import-review-heading"><div><h3>Import preview</h3><p>{importPreview.canConfirm ? 'Valid records are ready to import. Rows with errors are excluded.' : 'Fix the required headers or file issues before confirming this import.'}</p></div><span>{importPreview.errors?.length || 0} error(s) · {importPreview.warnings?.length || 0} warning(s)</span></div>
+                      <div className="import-count-grid">
+                        <div><strong>{importPreview.batch?.courses?.length || 0}</strong><span>Courses</span></div>
+                        <div><strong>{importPreview.batch?.instructors?.length || 0}</strong><span>Instructors</span></div>
+                        <div><strong>{importPreview.batch?.rooms?.length || 0}</strong><span>Rooms</span></div>
+                        <div><strong>{importPreview.batch?.instructorAvailability?.length || 0}</strong><span>Instructor availability records</span></div>
+                      </div>
+                      {(importPreview.errors?.length > 0 || importPreview.warnings?.length > 0) && (
+                        <div className="import-issues">
+                          {[...(importPreview.errors || []), ...(importPreview.warnings || [])].slice(0, 30).map((issue, index) => <p className={issue.severity === 'Error' ? 'is-error' : 'is-warning'} key={`${issue.source}-${issue.row}-${index}`}><b>{issue.severity}</b> · {issue.source}{issue.row ? `, row ${issue.row}` : ''}: {issue.message}</p>)}
+                          {(importPreview.errors.length + importPreview.warnings.length > 30) && <small>Showing the first 30 issues.</small>}
+                        </div>
+                      )}
+                      <div className="import-preview-tables">
+                        {[
+                          ['Courses', importPreview.batch?.courses || [], (row) => `${row.courseCode} — ${row.courseTitle} · ${row.predictedEnrollment} enrollment`],
+                          ['Instructors', importPreview.batch?.instructors || [], (row) => `${row.name} · ${row.qualifiedCourses?.length || 0} qualified course(s)`],
+                          ['Rooms', importPreview.batch?.rooms || [], (row) => `${row.roomNumber} · ${row.capacity} seats · ${row.roomType}`],
+                        ].map(([title, rows, describe]) => (
+                          <section key={title}><h4>{title} preview <small>({rows.length})</small></h4>{rows.length ? rows.slice(0, 5).map((row, index) => <p key={row.id || `${title}-${index}`}>{describe(row)}</p>) : <p>No valid {title.toLowerCase()} rows.</p>}{rows.length > 5 && <small>And {rows.length - 5} more…</small>}</section>
+                        ))}
+                      </div>
+                      <div className="import-confirm-row"><p>Confirming saves valid records to the workspace. Invalid rows stay out of MongoDB.</p><button className="primary" type="button" onClick={confirmScheduleImport} disabled={!importPreview.canConfirm || importConfirming}>{importConfirming ? 'Importing…' : 'Confirm and import valid records'}</button></div>
+                    </div>
+                  )}
+                  {importSummary && (
+                    <div className="import-summary" role="status">
+                      <h3>Import complete</h3>
+                      <div className="import-count-grid">
+                        <div><strong>{importSummary.coursesImported}</strong><span>Courses imported</span></div>
+                        <div><strong>{importSummary.instructorsImported}</strong><span>Instructors imported</span></div>
+                        <div><strong>{importSummary.roomsImported}</strong><span>Rooms imported</span></div>
+                        <div><strong>{importSummary.availabilityRecordsSaved}</strong><span>Availability records saved</span></div>
+                      </div>
+                      {(importSummary.errors?.length > 0 || importSummary.warnings?.length > 0) && <div className="import-issues">{[...(importSummary.errors || []), ...(importSummary.warnings || [])].map((issue, index) => <p className={issue.severity === 'Error' ? 'is-error' : 'is-warning'} key={`${issue.source}-${index}`}><b>{issue.severity}</b> · {issue.source}: {issue.message}</p>)}</div>}
+                    </div>
                   )}
                 </section>
               )}
@@ -1568,8 +2022,8 @@ export default function App() {
                       <h3 id="peak-period-title">Peak scheduling periods</h3>
                       {scheduleUtilization.peakPeriod ? (
                         <>
-                          <p className="peak-period-summary"><strong>{scheduleUtilization.peakPeriod.timeBlock}</strong><span>{scheduleUtilization.peakPeriod.count} course(s), busiest time block</span></p>
-                          <div className="peak-period-list">{scheduleUtilization.periods.slice(0, 4).map((period) => <div className="peak-period-row" key={period.timeBlock}><span>{period.timeBlock}</span><strong>{period.count}</strong></div>)}</div>
+                          <p className="peak-period-summary"><strong>{formatScheduleTimeBlock(scheduleUtilization.peakPeriod.timeBlock, workspace.scheduleBlocks)}</strong><span>{scheduleUtilization.peakPeriod.count} course(s), busiest time block</span></p>
+                          <div className="peak-period-list">{scheduleUtilization.periods.slice(0, 4).map((period) => <div className="peak-period-row" key={period.timeBlock}><span>{formatScheduleTimeBlock(period.timeBlock, workspace.scheduleBlocks)}</span><strong>{period.count}</strong></div>)}</div>
                         </>
                       ) : <p className="utilization-empty">No time blocks are assigned yet.</p>}
                     </section>
@@ -1596,22 +2050,22 @@ export default function App() {
                     <label>Course code<input type="search" placeholder="Search course code" value={scheduleFilters.courseCode} onChange={(event) => setScheduleFilters((current) => ({ ...current, courseCode: event.target.value }))} /></label>
                     <label>Instructor<select value={scheduleFilters.instructorId} onChange={(event) => setScheduleFilters((current) => ({ ...current, instructorId: event.target.value }))}><option value="">All instructors</option><option value="__unassigned__">Unassigned</option>{scheduleInstructorOptions.map((item) => <option key={item.id} value={item.id}>{item.name || 'Unnamed instructor'}</option>)}</select></label>
                     <label>Room<select value={scheduleFilters.roomId} onChange={(event) => setScheduleFilters((current) => ({ ...current, roomId: event.target.value }))}><option value="">All rooms</option><option value="__unassigned__">Unassigned</option>{scheduleRoomOptions.map((item) => <option key={item.id} value={item.id}>{item.name || 'Unnamed room'}</option>)}</select></label>
-                    <label>Day<select value={scheduleFilters.day} onChange={(event) => setScheduleFilters((current) => ({ ...current, day: event.target.value }))}><option value="">All days</option>{days.map((day) => <option key={day} value={day}>{day}</option>)}</select></label>
-                    <label>Time block<select value={scheduleFilters.timeBlock} onChange={(event) => setScheduleFilters((current) => ({ ...current, timeBlock: event.target.value }))}><option value="">All time blocks</option><option value="__unassigned__">Unassigned</option>{scheduleTimeOptions.map((time) => <option key={time} value={time}>{time}</option>)}</select></label>
+                    <label>Day<select value={scheduleFilters.day} onChange={(event) => setScheduleFilters((current) => ({ ...current, day: event.target.value }))}><option value="">All days</option>{scheduleDays.map((day) => <option key={day} value={day}>{day}</option>)}</select></label>
+                    <label>Time block<select value={scheduleFilters.timeBlock} onChange={(event) => setScheduleFilters((current) => ({ ...current, timeBlock: event.target.value }))}><option value="">All time blocks</option><option value="__unassigned__">Unassigned</option>{scheduleTimeOptions.map((time) => <option key={time} value={time}>{formatScheduleTimeBlock(time, workspace.scheduleBlocks)}</option>)}</select></label>
                     <label>Course type<select value={scheduleFilters.type} onChange={(event) => setScheduleFilters((current) => ({ ...current, type: event.target.value }))}><option value="">Lecture and laboratory</option><option value="lecture">Lecture</option><option value="lab">Laboratory</option></select></label>
                     <label>Validation status<select value={scheduleFilters.status} onChange={(event) => setScheduleFilters((current) => ({ ...current, status: event.target.value }))} disabled={validationStatus === 'pending' || validationLoading}><option value="">All statuses</option><option value="valid">Valid</option><option value="conflict">Conflict</option></select></label>
                   </div>
                 </section>
                 <div className="calendar">
-                  {days.map((day) => (
+                  {scheduleDays.map((day) => (
                     <div className="day" key={day}>
                       <h3><span>{day}</span><span className="day-count">{filteredScheduleSections.filter((section) => section.day === day).length}</span></h3>
                       {filteredScheduleSections.filter((section) => section.day === day)
                         .map((s, i) => (
                           <button className={`course ${s.isLab ? 'lab' : ''}`} key={`${s.courseCode}-${i}`} onClick={() => startEdit(s)} aria-label={`Edit ${s.courseCode} ${s.isLab ? 'laboratory' : 'lecture'} assignment`}>
                             <span className="course-topline"><b>{s.courseCode}</b><span className="course-kind">{s.isLab ? "Lab" : "Lecture"}</span></span>
-                            <strong className="course-time">{s.timeBlock || "Time unassigned"}</strong>
-                            <span className="course-meta">⌖ {s.roomNumber || "Room unassigned"}</span>
+                            <strong className="course-time">{formatScheduleTimeBlock(s.timeBlock, workspace.scheduleBlocks)}</strong>
+                            <span className="course-meta">⌖ {s.timeBlock === 'ASYNC' ? 'Online / asynchronous' : s.roomNumber || "Room unassigned"}</span>
                             <span className="course-meta">◉ {s.instructorName || "Instructor unassigned"}</span>
                             <span className="course-hint">Click to edit <span aria-hidden="true">↗</span></span>
                           </button>
@@ -1662,7 +2116,7 @@ export default function App() {
                   <span className="empty-state-icon" aria-hidden="true">▤</span>
                   <h2>No schedule draft exists yet.</h2>
                   <p>Select your courses in Planning Workspace, then generate a draft to begin.</p>
-                  <button className="primary" onClick={() => { setView('planning'); setPlanningTab('offerings') }}>Select courses</button>
+                  <button className="primary" onClick={() => { navigateToView('planning'); setPlanningTab('offerings') }}>Select courses</button>
                 </div>
               )}
             </section>
@@ -1670,7 +2124,7 @@ export default function App() {
           {view === 'print' && draft && (
             <section className="print-view" aria-labelledby="print-schedule-title">
               <div className="print-view-actions">
-                <button type="button" onClick={() => setView('schedule')}>← Back to schedule</button>
+                <button type="button" onClick={() => navigateToView('schedule')}>← Back to schedule</button>
                 <button type="button" className="primary" onClick={() => window.print()}>Print / Save as PDF</button>
                 <span>Choose “Save as PDF” in the print dialog to download a PDF.</span>
               </div>
@@ -1725,6 +2179,7 @@ export default function App() {
                     .filter(Boolean)
                   const affectedCodeSet = new Set(affectedCodes.map((code) => code.toLowerCase()))
                   const affectedSections = (draft?.sections || []).filter((section) => affectedCodeSet.has((section.courseCode || '').toLowerCase()))
+                  const quickFixesByCourse = new Map(affectedSections.map((section) => [section.courseCode, getConflictQuickFixes(conflict, section)]))
                   return (
                     <article className="conflict detailed-conflict conflict-card" key={i} role="alert">
                       <b className="conflict-icon" aria-hidden="true">!</b>
@@ -1751,11 +2206,19 @@ export default function App() {
                               <div className="conflict-assignment" key={`${section.courseCode}-${sectionIndex}`}>
                                 <div className="assignment-details">
                                   <strong>{section.courseCode} <small>Current assignment</small></strong>
-                                  <span><b>Day / time</b>{section.day || 'Unassigned'} · {section.timeBlock || 'Unassigned'}</span>
+                                  <span><b>Day / time</b>{section.day || 'Unassigned'} · {formatScheduleTimeBlock(section.timeBlock, workspace.scheduleBlocks)}</span>
                                   <span><b>Room</b>{section.roomNumber || 'Unassigned'}</span>
                                   <span><b>Instructor</b>{section.instructorName || 'Unassigned'}</span>
                                 </div>
                                 <button className="conflict-edit-button" onClick={() => startEdit(section)} aria-label={`Edit assignment for ${section.courseCode}`}>Edit assignment <span aria-hidden="true">↗</span></button>
+                                {quickFixesByCourse.get(section.courseCode)?.length > 0 && (
+                                  <div className="conflict-quick-fixes" aria-label={`Quick fixes for ${section.courseCode}`}>
+                                    <span>Recommended quick fixes</span>
+                                    {quickFixesByCourse.get(section.courseCode).map((fix) => (
+                                      <button key={fix.label} type="button" onClick={() => startEdit(section, fix.assignment)}>{fix.label}</button>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -1792,7 +2255,7 @@ export default function App() {
                 </div>
                 <div className="saved-header-actions">
                   <span className="saved-count">{filteredSavedDrafts.length} <small>of {savedDrafts.length} drafts</small></span>
-                  <button onClick={loadDrafts} disabled={draftsLoading}>{draftsLoading ? 'Refreshing…' : '↻ Refresh'}</button>
+                  <button onClick={() => loadDrafts(true)} disabled={draftsLoading}>{draftsLoading ? 'Refreshing…' : '↻ Refresh'}</button>
                 </div>
               </div>
               {draftsLoading ? (
@@ -1944,14 +2407,24 @@ export default function App() {
                 <div className="empty-state" role="status">
                   <h2>Saved drafts could not be loaded.</h2>
                   <p>Check the connection, then try again.</p>
-                  <button onClick={loadDrafts}>Retry loading drafts</button>
+                  <button onClick={() => loadDrafts(true)}>Retry loading drafts</button>
                 </div>
               )}
             </section>
           )}
+          </div>
           <footer>
-            ScheduleSpark · Team D · Delta{" "}
-            <span>React JavaScript + ASP.NET Core + MongoDB</span>
+            <div className="footer-brand-lockup" aria-label="University at Albany and ScheduleSpark">
+              <a className="footer-ualbany" href="https://www.albany.edu/" target="_blank" rel="noreferrer" aria-label="University at Albany website">
+                <img src="https://www.albany.edu/sites/default/files/UAlbany_Minerva_Informal_Left_PurpleBlack.png" alt="University at Albany" />
+              </a>
+              <span className="footer-brand-divider" aria-hidden="true"></span>
+              <img className="footer-schedulespark" src="/schedulespark-footer.svg" alt="ScheduleSpark" />
+            </div>
+            <div className="footer-copy">
+              <strong>Academic scheduling workspace</strong>
+              <span>{semester} · Plan courses, review conflicts, and manage schedule drafts.</span>
+            </div>
           </footer>
         </main>
       </div>

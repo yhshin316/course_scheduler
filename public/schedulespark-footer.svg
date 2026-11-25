@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 64" role="img" aria-labelledby="title desc">
+  <title id="title">ScheduleSpark</title>
+  <desc id="desc">ScheduleSpark academic scheduling logo</desc>
+  <g transform="translate(4 4)">
+    <rect x="0" y="0" width="56" height="56" rx="15" fill="#eeb211"/>
+    <path d="M16 19h24v25H16z" fill="none" stroke="#46166b" stroke-width="3.5" stroke-linejoin="round"/>
+    <path d="M22 14v10M34 14v10M16 27h24" fill="none" stroke="#46166b" stroke-width="3.5" stroke-linecap="round"/>
+    <path d="m27 33-3 6h5l-1 6 7-9h-5l2-3z" fill="#46166b" stroke="#46166b" stroke-linejoin="round"/>
+  </g>
+  <text x="74" y="39" fill="#46166b" font-family="Public Sans, Segoe UI, Arial, sans-serif" font-size="23" font-weight="750" letter-spacing="-.4">ScheduleSpark</text>
+</svg>
