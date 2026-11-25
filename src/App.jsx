@@ -121,6 +121,7 @@ function ResourceTable({ title, description, headers, rows }) {
 
 export default function App() {
   const [semester, setSemester] = useState("Fall 2026");
+  const [selectedOfferingIds, setSelectedOfferingIds] = useState([]);
   const [workspace, setWorkspace] = useState({
     offerings: [],
     instructors: [],
@@ -321,6 +322,19 @@ export default function App() {
       ),
     [workspace.offerings, search],
   );
+  const allOfferingIds = workspace.offerings.map((item) => item.id || item._id).filter(Boolean).map(String)
+  const allOfferingsSelected = allOfferingIds.length > 0 && allOfferingIds.every((id) => selectedOfferingIds.includes(id))
+
+  function toggleOffering(id) {
+    const normalizedId = String(id)
+    setSelectedOfferingIds((current) => current.includes(normalizedId)
+      ? current.filter((selectedId) => selectedId !== normalizedId)
+      : [...current, normalizedId])
+  }
+
+  function selectAllOfferings() {
+    setSelectedOfferingIds(allOfferingIds)
+  }
   const filteredInstructors = useMemo(() => workspace.instructors.filter((item) => {
     const qualified = Array.isArray(item.qualifiedCourses) ? item.qualifiedCourses.join(' ') : (item.qualifiedCourses || '')
     const blocks = Array.isArray(item.availableBlocks) ? item.availableBlocks.join(' ') : (item.availableBlocks || '')
@@ -342,9 +356,20 @@ export default function App() {
   const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
   const scheduledCount = draft?.sections?.length || 0
   const assignedCount = draft?.sections?.filter((section) => section.instructorId && section.roomId && section.day && section.timeBlock).length || 0
+  const instructorWorkload = useMemo(() => workspace.instructors.map((instructor) => {
+    const assignments = (draft?.sections || []).filter((section) => section.instructorId && section.instructorId === instructor.id)
+    const maximumLoad = Number(instructor.maximumCourseLoad ?? 0)
+    return { instructor, assignments, overloaded: assignments.length > maximumLoad }
+  }), [workspace.instructors, draft?.sections])
 
   async function generateDraft() {
+    if (!selectedOfferingIds.length) {
+      toast.error('Select at least one course offering to generate a draft.')
+      return
+    }
+
     const toastId = toast.loading('Generating schedule draft...')
+    const selectedCount = selectedOfferingIds.length
 
     try {
       setLoading(true)
@@ -353,7 +378,7 @@ export default function App() {
         method: 'POST',
         body: JSON.stringify({
           semester,
-          offeringIds: [],
+          offeringIds: selectedOfferingIds,
         }),
       })
 
@@ -364,7 +389,7 @@ export default function App() {
       setView('schedule')
 
       toast.dismiss(toastId)
-      toast.success('Schedule draft generated successfully.')
+      toast.success(`Draft generated with ${selectedCount} selected ${selectedCount === 1 ? 'course' : 'courses'}.`)
     } catch (error) {
       toast.dismiss(toastId)
       toast.error(`Draft generation failed: ${error.message}`)
@@ -750,7 +775,10 @@ export default function App() {
                 Semester
                 <select
                   value={semester}
-                  onChange={(e) => setSemester(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedOfferingIds([])
+                    setSemester(e.target.value)
+                  }}
                 >
                   <option>Fall 2026</option>
                   <option>Spring 2027</option>
@@ -810,9 +838,9 @@ export default function App() {
                       <button
                         className="primary"
                         onClick={generateDraft}
-                        disabled={loading}
+                        disabled={loading || selectedOfferingIds.length === 0}
                       >
-                        ✦ Generate draft
+                        ✦ Generate selected draft ({selectedOfferingIds.length})
                       </button>
                     </div>
                     <div className="toolbar">
@@ -821,11 +849,18 @@ export default function App() {
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                       />
-                      <span>{offerings.length} offering(s)</span>
+                      <div className="offering-selection-summary">
+                        <span><strong>{selectedOfferingIds.length}</strong> selected · {offerings.length} shown</span>
+                        <div className="offering-selection-actions">
+                          <button type="button" onClick={selectAllOfferings} disabled={!allOfferingIds.length || allOfferingsSelected}>Select all</button>
+                          <button type="button" onClick={() => setSelectedOfferingIds([])} disabled={!selectedOfferingIds.length}>Clear selection</button>
+                        </div>
+                      </div>
                     </div>
                     <table>
                       <thead>
                         <tr>
+                          <th scope="col" className="offering-select-column">Select</th>
                           <th>Course</th>
                           <th>Title</th>
                           <th>Predicted enrollment</th>
@@ -835,10 +870,19 @@ export default function App() {
                       </thead>
                       <tbody>
                         {workspaceLoading ? (
-                          <tr><td colSpan="5" className="empty" role="status" aria-live="polite">Loading course offerings…</td></tr>
+                          <tr><td colSpan="6" className="empty" role="status" aria-live="polite">Loading course offerings…</td></tr>
                         ) : offerings.length ? (
                           offerings.map((item) => (
-                            <tr key={item.id}>
+                            <tr key={item.id || item._id} className={selectedOfferingIds.includes(String(item.id || item._id)) ? 'offering-selected' : ''}>
+                              <td className="offering-select-column">
+                                <input
+                                  type="checkbox"
+                                  aria-label={`Select ${item.courseCode} — ${item.courseTitle}`}
+                                  checked={selectedOfferingIds.includes(String(item.id || item._id))}
+                                  onChange={() => toggleOffering(item.id || item._id)}
+                                  disabled={!item.id && !item._id}
+                                />
+                              </td>
                               <td>
                                 <b>{item.courseCode}</b>
                               </td>
@@ -854,7 +898,7 @@ export default function App() {
                           ))
                         ) : (
                           <tr>
-                            <td colSpan="5" className="empty">
+                            <td colSpan="6" className="empty">
                               No course offerings found for {semester}.
                             </td>
                           </tr>
@@ -1083,6 +1127,42 @@ export default function App() {
                     </div>
                   ))}
                 </div>
+                <section className="workload-panel" aria-labelledby="instructor-workload-title">
+                  <div className="workload-header">
+                    <div>
+                      <span className="eyebrow">INSTRUCTOR LOAD</span>
+                      <h2 id="instructor-workload-title">Instructor workload</h2>
+                      <p>Compare assigned courses with each instructor’s maximum load.</p>
+                    </div>
+                    <span className="workload-count">{instructorWorkload.filter((item) => item.overloaded).length} overloaded</span>
+                  </div>
+                  <div className="workload-table-scroll">
+                    <table className="workload-table">
+                      <thead>
+                        <tr><th>Instructor</th><th>Assigned courses</th><th>Maximum load</th><th>Status</th><th>Actions</th></tr>
+                      </thead>
+                      <tbody>
+                        {instructorWorkload.length ? instructorWorkload.map(({ instructor, assignments, overloaded }) => (
+                          <tr key={instructor.id || instructor.name}>
+                            <td><strong>{instructor.name || 'Unnamed instructor'}</strong></td>
+                            <td><span className="workload-assignment-count">{assignments.length}</span></td>
+                            <td>{instructor.maximumCourseLoad ?? '—'}</td>
+                            <td><span className={`workload-status${overloaded ? ' is-overloaded' : ''}`}><i aria-hidden="true" />{overloaded ? 'Overloaded' : 'Available'}</span></td>
+                            <td>
+                              {assignments.length ? (
+                                <div className="workload-edit-actions">
+                                  {assignments.map((section) => <button type="button" key={section.courseCode} onClick={() => startEdit(section)} aria-label={`Edit ${section.courseCode} assignment for ${instructor.name}`}>Edit {section.courseCode}</button>)}
+                                </div>
+                              ) : <span className="workload-no-actions">No assignments</span>}
+                            </td>
+                          </tr>
+                        )) : (
+                          <tr><td colSpan="5" className="empty">No instructor records available.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
                 </>
               ) : (
                 <div className="empty-state">
