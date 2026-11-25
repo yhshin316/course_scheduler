@@ -49,6 +49,23 @@ function getConflictComparisonKey(item) {
   return `${conflict.code || conflict.category || 'conflict'}|${courseCodes.join(',')}|${courseCodes.length ? '' : (conflict.message || '').toLowerCase()}`
 }
 
+function getAffectedCourseCodes(item) {
+  const conflict = typeof item === 'string' ? { courseCode: item } : item
+  const rawCodes = conflict.affectedCourseCodes?.length
+    ? conflict.affectedCourseCodes
+    : [conflict.courseCode, conflict.conflictingCourseCode, conflict.relatedCourseCode].filter(Boolean)
+  return (Array.isArray(rawCodes) ? rawCodes : [rawCodes])
+    .flatMap((value) => String(value || '').split(','))
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+}
+
+function csvCell(value) {
+  let text = String(value ?? '')
+  if (/^\s*[=+\-@]/.test(text)) text = `'${text}`
+  return `"${text.replaceAll('"', '""')}"`
+}
+
 function compareDraftAssignments(draftA, draftB) {
   const sectionsA = new Map((draftA.sections || []).map((section) => [section.courseCode.toLowerCase(), section]))
   const sectionsB = new Map((draftB.sections || []).map((section) => [section.courseCode.toLowerCase(), section]))
@@ -173,6 +190,7 @@ export default function App() {
   const [validationStatus, setValidationStatus] = useState('pending');
   const [savedDraftId, setSavedDraftId] = useState(null);
   const [conflicts, setConflicts] = useState([]);
+  const [scheduleFilters, setScheduleFilters] = useState({ courseCode: '', instructorId: '', roomId: '', day: '', timeBlock: '', type: '', status: '' });
   const [view, setView] = useState("planning");
   const [search, setSearch] = useState("");
   const [instructorSearch, setInstructorSearch] = useState("");
@@ -185,6 +203,10 @@ export default function App() {
   const [connected, setConnected] = useState(false);
   const [planningTab, setPlanningTab] = useState("offerings");
   const [savedDrafts, setSavedDrafts] = useState([]);
+  const [historyDraftId, setHistoryDraftId] = useState('');
+  const [draftVersions, setDraftVersions] = useState([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [restoringVersion, setRestoringVersion] = useState(null);
   const [compareDraftAId, setCompareDraftAId] = useState('');
   const [compareDraftBId, setCompareDraftBId] = useState('');
   const [draftComparison, setDraftComparison] = useState(null);
@@ -319,11 +341,21 @@ export default function App() {
 
   async function openDraft(id) {
     try {
-      setDraft(await request(`/api/schedules/drafts/${id}`));
+      const openedDraft = await request(`/api/schedules/drafts/${id}`)
+      setDraft(openedDraft)
       setSavedDraftId(id)
       setValidationStatus('pending')
+      setConflicts([])
+      setScheduleFilters({ courseCode: '', instructorId: '', roomId: '', day: '', timeBlock: '', type: '', status: '' })
       setView("schedule");
       setMessage("Saved draft opened.");
+      try {
+        const validation = await request('/api/schedules/validate', { method: 'POST', body: JSON.stringify({ draft: openedDraft }) })
+        setConflicts(validation.errors || [])
+        setValidationStatus(validation.isValid ? 'valid' : 'issues')
+      } catch {
+        setMessage('Draft opened, but validation could not be loaded.')
+      }
     } catch (error) {
       setMessage(`Could not open draft: ${error.message}`);
     }
@@ -353,6 +385,40 @@ export default function App() {
       toast.error(`Could not duplicate draft: ${error.message}`)
     } finally {
       setDuplicatingDraftId(null)
+    }
+  }
+
+  async function loadDraftVersions(draftId) {
+    setHistoryDraftId(draftId)
+    setDraftVersions([])
+    setVersionsLoading(true)
+    try {
+      setDraftVersions(await request(`/api/schedules/drafts/${encodeURIComponent(draftId)}/versions`))
+    } catch (error) {
+      toast.error(`Could not load draft history: ${error.message}`)
+    } finally {
+      setVersionsLoading(false)
+    }
+  }
+
+  async function restoreDraftVersion(draftId, versionNumber) {
+    setRestoringVersion(versionNumber)
+    try {
+      const restored = await request(`/api/schedules/drafts/${encodeURIComponent(draftId)}/versions/${versionNumber}/restore`, { method: 'POST' })
+      setSavedDrafts((current) => current.map((item) => (item.id || item._id) === draftId ? restored : item))
+      if ((draft?.id || draft?._id) === draftId) {
+        setDraft(restored)
+        setSavedDraftId(draftId)
+        const validation = await request('/api/schedules/validate', { method: 'POST', body: JSON.stringify({ draft: restored }) })
+        setConflicts(validation.errors || [])
+        setValidationStatus(validation.isValid ? 'valid' : 'issues')
+      }
+      await loadDraftVersions(draftId)
+      toast.success(`Version ${versionNumber} restored as version ${restored.versionNumber}.`)
+    } catch (error) {
+      toast.error(`Could not restore version: ${error.message}`)
+    } finally {
+      setRestoringVersion(null)
     }
   }
 
@@ -407,6 +473,10 @@ export default function App() {
     try {
       await request(`/api/schedules/drafts/${encodeURIComponent(id)}`, { method: 'DELETE' })
       setSavedDrafts((current) => current.filter((saved) => (saved.id || saved._id) !== id))
+      if (historyDraftId === id) {
+        setHistoryDraftId('')
+        setDraftVersions([])
+      }
       if (compareDraftAId === id) setCompareDraftAId('')
       if (compareDraftBId === id) setCompareDraftBId('')
       if (compareDraftAId === id || compareDraftBId === id) setDraftComparison(null)
@@ -468,6 +538,41 @@ export default function App() {
   const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
   const scheduledCount = draft?.sections?.length || 0
   const assignedCount = draft?.sections?.filter((section) => section.instructorId && section.roomId && section.day && section.timeBlock).length || 0
+  const conflictCourseCodes = useMemo(() => {
+    const codes = new Set()
+    for (const item of conflicts) {
+      const conflict = typeof item === 'string' ? { courseCode: item } : item
+      const values = conflict.affectedCourseCodes?.length
+        ? conflict.affectedCourseCodes
+        : [conflict.courseCode, conflict.conflictingCourseCode, conflict.relatedCourseCode].filter(Boolean)
+      for (const value of (Array.isArray(values) ? values : [values])) {
+        for (const code of String(value || '').split(',')) if (code.trim()) codes.add(code.trim().toLowerCase())
+      }
+    }
+    return codes
+  }, [conflicts])
+  const filteredScheduleSections = useMemo(() => (draft?.sections || []).filter((section) => {
+    const courseMatches = !scheduleFilters.courseCode || `${section.courseCode || ''}`.toLowerCase().includes(scheduleFilters.courseCode.toLowerCase())
+    const instructorMatches = !scheduleFilters.instructorId || (scheduleFilters.instructorId === '__unassigned__' ? !section.instructorId : section.instructorId === scheduleFilters.instructorId)
+    const roomMatches = !scheduleFilters.roomId || (scheduleFilters.roomId === '__unassigned__' ? !section.roomId : section.roomId === scheduleFilters.roomId)
+    const dayMatches = !scheduleFilters.day || section.day === scheduleFilters.day
+    const timeMatches = !scheduleFilters.timeBlock || (scheduleFilters.timeBlock === '__unassigned__' ? !section.timeBlock : section.timeBlock === scheduleFilters.timeBlock)
+    const typeMatches = !scheduleFilters.type || (scheduleFilters.type === 'lab' ? section.isLab : !section.isLab)
+    const hasConflict = conflictCourseCodes.has((section.courseCode || '').toLowerCase())
+    const statusMatches = !scheduleFilters.status || (scheduleFilters.status === 'conflict' ? hasConflict : !hasConflict)
+    return courseMatches && instructorMatches && roomMatches && dayMatches && timeMatches && typeMatches && statusMatches
+  }), [draft?.sections, scheduleFilters, conflictCourseCodes])
+  const scheduleInstructorOptions = [...new Map([
+    ...workspace.instructors.map((item) => [item.id, { id: item.id, name: item.name }]),
+    ...(draft?.sections || []).filter((section) => section.instructorId).map((section) => [section.instructorId, { id: section.instructorId, name: section.instructorName }]),
+  ].filter(([id]) => id)).values()]
+  const scheduleRoomOptions = [...new Map([
+    ...workspace.rooms.map((item) => [item.id, { id: item.id, name: item.roomNumber }]),
+    ...(draft?.sections || []).filter((section) => section.roomId).map((section) => [section.roomId, { id: section.roomId, name: section.roomNumber }]),
+  ].filter(([id]) => id)).values()]
+  const scheduleTimeOptions = [...new Set((draft?.sections || []).map((section) => section.timeBlock).filter(Boolean))].sort()
+  const hasScheduleFilters = Object.values(scheduleFilters).some(Boolean)
+  const scheduleStatusLabel = validationStatus === 'valid' ? 'Valid' : validationStatus === 'issues' ? 'Needs Review' : (draft?.status || 'Not validated')
   const instructorWorkload = useMemo(() => workspace.instructors.map((instructor) => {
     const assignments = (draft?.sections || []).filter((section) => section.instructorId && section.instructorId === instructor.id)
     const maximumLoad = Number(instructor.maximumCourseLoad ?? 0)
@@ -498,7 +603,16 @@ export default function App() {
       setValidationStatus('pending')
       setSavedDraftId(null)
       setConflicts([])
+      setScheduleFilters({ courseCode: '', instructorId: '', roomId: '', day: '', timeBlock: '', type: '', status: '' })
       setView('schedule')
+
+      try {
+        const validation = await request('/api/schedules/validate', { method: 'POST', body: JSON.stringify({ draft: generatedDraft }) })
+        setConflicts(validation.errors || [])
+        setValidationStatus(validation.isValid ? 'valid' : 'issues')
+      } catch {
+        setMessage('Draft generated, but validation could not be loaded.')
+      }
 
       toast.dismiss(toastId)
       toast.success(`Draft generated with ${selectedCount} selected ${selectedCount === 1 ? 'course' : 'courses'}.`)
@@ -540,6 +654,44 @@ export default function App() {
       toast.dismiss(toastId)
       toast.error(`Validation failed: ${error.message}`)
     }
+  }
+
+  function exportCsv() {
+    if (!draft) return
+    const rows = [[
+      'Semester', 'Draft name', 'Schedule status', 'Course', 'Instructor', 'Room', 'Day', 'Time', 'Conflict summary',
+    ]]
+    for (const section of draft.sections || []) {
+      const sectionConflicts = conflicts.filter((item) => getAffectedCourseCodes(item).includes((section.courseCode || '').toLowerCase()))
+      rows.push([
+        draft.semester,
+        draft.name,
+        scheduleStatusLabel,
+        section.courseCode,
+        section.instructorName || 'Unassigned',
+        section.roomNumber || 'Unassigned',
+        section.day || 'Unassigned',
+        section.timeBlock || 'Unassigned',
+        sectionConflicts.map((item) => typeof item === 'string' ? item : item.message || item.category).join(' | ') || 'No conflicts',
+      ])
+    }
+    const csv = rows.map((row) => row.map(csvCell).join(',')).join('\r\n')
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${(draft.name || 'schedule').replace(/[^a-z0-9_-]+/gi, '-')}.csv`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    toast.success('Schedule exported as CSV.')
+  }
+
+  function openPrintView(exportPdf = false) {
+    if (!draft) return
+    setView('print')
+    if (exportPdf) window.setTimeout(() => window.print(), 250)
   }
 
   function startEdit(section) {
@@ -586,7 +738,7 @@ export default function App() {
       )
 
       setDraft(result.draft)
-      setSavedDraftId(null)
+      setSavedDraftId(result.draft.id || result.draft._id)
       setValidationStatus(result.isValid ? 'valid' : 'issues')
       setConflicts(result.errors || [])
       setEditingConflicts(result.isValid ? [] : (result.errors || []))
@@ -873,6 +1025,8 @@ export default function App() {
                   ? "Planning Workspace"
                   : view === "schedule"
                     ? "Schedule Builder"
+                    : view === "print"
+                      ? "Print Schedule"
                     : view === "saved"
                       ? "Saved Drafts"
                       : "Conflict Review"}
@@ -899,7 +1053,7 @@ export default function App() {
               <button onClick={loadWorkspace} disabled={workspaceLoading}>{workspaceLoading ? 'Loading…' : '↻ Refresh'}</button>
             </div>
           </header>
-          <WorkflowProgress
+          {view !== 'print' && <WorkflowProgress
             activeStep={view}
             completedSteps={[
               ...(connected ? ['planning'] : []),
@@ -908,8 +1062,8 @@ export default function App() {
               ...(savedDraftId ? ['saved'] : []),
             ]}
             onSelect={setView}
-          />
-          <section className="stats">
+          />}
+          {view !== 'print' && <section className="stats">
             <Stat label="Course offerings" value={workspace.offerings.length} />
             <Stat label="Instructors" value={workspace.instructors.length} />
             <Stat label="Rooms and labs" value={workspace.rooms.length} />
@@ -918,7 +1072,7 @@ export default function App() {
               value={conflicts.length}
               danger={conflicts.length > 0}
             />
-          </section>
+          </section>}
           {view === "planning" && (
             <>
               <div className="planning-tabs">
@@ -1223,6 +1377,14 @@ export default function App() {
                 <div className="schedule-actions">
                   <button onClick={validateDraft} disabled={!draft || loading}>Validate</button>
                   <button onClick={saveDraft} disabled={!draft || loading}>Save draft</button>
+                  <details className="schedule-export-menu">
+                    <summary aria-label="Export or print schedule">Export <svg className="export-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg></summary>
+                    <div className="schedule-export-options">
+                      <button type="button" onClick={(event) => { event.currentTarget.closest('details').open = false; exportCsv() }} disabled={!draft || loading}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 2.75h8l4 4v10.5H4zM12 2.75v4h4M7 10h6M7 13h6" /></svg>Download CSV</button>
+                      <button type="button" onClick={() => openPrintView(true)} disabled={!draft || loading}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 2.75h7l3 3v11.5H5zM12 2.75v3h3M7.5 10h5M7.5 13h5" /><path d="M8 16v1.5h4V16" /></svg>Save as PDF</button>
+                      <button type="button" onClick={() => openPrintView()} disabled={!draft || loading}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 7V3h10v4M5 14H3.5V8.5h13V14H15M5 12h10v5H5zM14 10.5h.01" /></svg>Open print view</button>
+                    </div>
+                  </details>
                   <button className="primary" onClick={generateDraft} disabled={loading}>✦ Regenerate</button>
                 </div>
               </div>
@@ -1234,11 +1396,26 @@ export default function App() {
                   <span className={`validation-pill ${validationStatus}`}>{validationStatus === 'valid' ? '✓ Validated' : validationStatus === 'issues' ? '⚠ Needs review' : '○ Not validated'}</span>
                   <small>Select a card to edit instructor, room, day, or time.</small>
                 </div>
+                <section className="schedule-filter-panel" aria-label="Filter schedule assignments">
+                  <div className="schedule-filter-heading">
+                    <div><strong>Filter schedule</strong><span>Showing {filteredScheduleSections.length} of {scheduledCount} courses</span></div>
+                    <button type="button" onClick={() => setScheduleFilters({ courseCode: '', instructorId: '', roomId: '', day: '', timeBlock: '', type: '', status: '' })} disabled={!hasScheduleFilters}>Clear filters</button>
+                  </div>
+                  <div className="schedule-filter-grid">
+                    <label>Course code<input type="search" placeholder="Search course code" value={scheduleFilters.courseCode} onChange={(event) => setScheduleFilters((current) => ({ ...current, courseCode: event.target.value }))} /></label>
+                    <label>Instructor<select value={scheduleFilters.instructorId} onChange={(event) => setScheduleFilters((current) => ({ ...current, instructorId: event.target.value }))}><option value="">All instructors</option><option value="__unassigned__">Unassigned</option>{scheduleInstructorOptions.map((item) => <option key={item.id} value={item.id}>{item.name || 'Unnamed instructor'}</option>)}</select></label>
+                    <label>Room<select value={scheduleFilters.roomId} onChange={(event) => setScheduleFilters((current) => ({ ...current, roomId: event.target.value }))}><option value="">All rooms</option><option value="__unassigned__">Unassigned</option>{scheduleRoomOptions.map((item) => <option key={item.id} value={item.id}>{item.name || 'Unnamed room'}</option>)}</select></label>
+                    <label>Day<select value={scheduleFilters.day} onChange={(event) => setScheduleFilters((current) => ({ ...current, day: event.target.value }))}><option value="">All days</option>{days.map((day) => <option key={day} value={day}>{day}</option>)}</select></label>
+                    <label>Time block<select value={scheduleFilters.timeBlock} onChange={(event) => setScheduleFilters((current) => ({ ...current, timeBlock: event.target.value }))}><option value="">All time blocks</option><option value="__unassigned__">Unassigned</option>{scheduleTimeOptions.map((time) => <option key={time} value={time}>{time}</option>)}</select></label>
+                    <label>Course type<select value={scheduleFilters.type} onChange={(event) => setScheduleFilters((current) => ({ ...current, type: event.target.value }))}><option value="">Lecture and laboratory</option><option value="lecture">Lecture</option><option value="lab">Laboratory</option></select></label>
+                    <label>Validation status<select value={scheduleFilters.status} onChange={(event) => setScheduleFilters((current) => ({ ...current, status: event.target.value }))} disabled={validationStatus === 'pending'}><option value="">All statuses</option><option value="valid">Valid</option><option value="conflict">Conflict</option></select></label>
+                  </div>
+                </section>
                 <div className="calendar">
                   {days.map((day) => (
                     <div className="day" key={day}>
-                      <h3><span>{day}</span><span className="day-count">{(draft.sections || []).filter((section) => section.day === day).length}</span></h3>
-                      {(draft.sections || []).filter((s) => s.day === day)
+                      <h3><span>{day}</span><span className="day-count">{filteredScheduleSections.filter((section) => section.day === day).length}</span></h3>
+                      {filteredScheduleSections.filter((section) => section.day === day)
                         .map((s, i) => (
                           <button className={`course ${s.isLab ? 'lab' : ''}`} key={`${s.courseCode}-${i}`} onClick={() => startEdit(s)} aria-label={`Edit ${s.courseCode} ${s.isLab ? 'laboratory' : 'lecture'} assignment`}>
                             <span className="course-topline"><b>{s.courseCode}</b><span className="course-kind">{s.isLab ? "Lab" : "Lecture"}</span></span>
@@ -1248,7 +1425,7 @@ export default function App() {
                             <span className="course-hint">Click to edit <span aria-hidden="true">↗</span></span>
                           </button>
                         ))}
-                      {!draft.sections?.some((section) => section.day === day) && <p className="day-empty">No assignments</p>}
+                      {!filteredScheduleSections.some((section) => section.day === day) && <p className="day-empty">{hasScheduleFilters ? 'No matching courses' : 'No assignments'}</p>}
                     </div>
                   ))}
                 </div>
@@ -1297,6 +1474,40 @@ export default function App() {
                   <button className="primary" onClick={generateDraft} disabled={loading || workspaceLoading}>✦ Generate draft</button>
                 </div>
               )}
+            </section>
+          )}
+          {view === 'print' && draft && (
+            <section className="print-view" aria-labelledby="print-schedule-title">
+              <div className="print-view-actions">
+                <button type="button" onClick={() => setView('schedule')}>← Back to schedule</button>
+                <button type="button" className="primary" onClick={() => window.print()}>Print / Save as PDF</button>
+                <span>Choose “Save as PDF” in the print dialog to download a PDF.</span>
+              </div>
+              <header className="print-document-header">
+                <span className="eyebrow">SCHEDULESPARK · {draft.semester || semester}</span>
+                <h1 id="print-schedule-title">{draft.name || 'Schedule draft'}</h1>
+                <div className="print-metadata">
+                  <span><b>Semester</b>{draft.semester || semester}</span>
+                  <span><b>Draft name</b>{draft.name || 'Schedule draft'}</span>
+                  <span><b>Schedule status</b><strong className={`print-status ${scheduleStatusLabel === 'Valid' ? 'is-valid' : 'is-review'}`}>{scheduleStatusLabel}</strong></span>
+                </div>
+              </header>
+              <section className="print-conflict-summary">
+                <div><h2>Conflict summary</h2><span>{conflicts.length} {conflicts.length === 1 ? 'conflict' : 'conflicts'}</span></div>
+                {conflicts.length ? (
+                  <ul>{conflicts.map((item, index) => {
+                    const conflict = typeof item === 'string' ? { message: item } : item
+                    return <li key={`${getConflictComparisonKey(item)}-${index}`}><b>{conflict.category || conflict.code || 'Scheduling conflict'}</b> — {conflict.message || 'Review this assignment.'}</li>
+                  })}</ul>
+                ) : <p>{scheduleStatusLabel === 'Valid' ? 'No conflicts found.' : 'No conflict details are available. Validate the schedule for an updated summary.'}</p>}
+              </section>
+              <section className="print-course-section">
+                <h2>Course schedule</h2>
+                <table>
+                  <thead><tr><th>Course</th><th>Instructor</th><th>Room</th><th>Day</th><th>Time</th></tr></thead>
+                  <tbody>{(draft.sections || []).map((section, index) => <tr key={`${section.courseCode}-${index}`}><td>{section.courseCode || '—'}</td><td>{section.instructorName || 'Unassigned'}</td><td>{section.roomNumber || 'Unassigned'}</td><td>{section.day || 'Unassigned'}</td><td>{section.timeBlock || 'Unassigned'}</td></tr>)}</tbody>
+                </table>
+              </section>
             </section>
           )}
           {view === "conflicts" && (
@@ -1476,10 +1687,12 @@ export default function App() {
                             <span className="saved-semester">{item.semester || 'Semester not specified'}</span>
                             <div className="saved-draft-metrics">
                               <div className={violationCount ? 'has-violations' : 'no-violations'}><strong>{violationCount}</strong><span>{violationCount === 1 ? 'required violation' : 'required violations'}</span></div>
+                              <div><strong>Version {item.versionNumber || 1}</strong><span>Current version</span></div>
                               <div><strong>{formattedModifiedDate}</strong><span>Last modified</span></div>
                             </div>
                             <div className="saved-card-actions">
                               <button className="saved-open-button" onClick={() => openDraft(item.id || item._id)} disabled={!item.id && !item._id}>Open draft <span aria-hidden="true">→</span></button>
+                              <button className="saved-history-button" onClick={() => loadDraftVersions(item.id || item._id)} disabled={!item.id && !item._id}>History</button>
                               <button className="saved-duplicate-button" onClick={() => duplicateDraft(item)} disabled={(!item.id && !item._id) || duplicatingDraftId === (item.id || item._id)}>{duplicatingDraftId === (item.id || item._id) ? 'Copying…' : 'Duplicate'}</button>
                               <button className="saved-delete-button" onClick={() => deleteDraft(item)} disabled={(!item.id && !item._id) || deletingDraftId === (item.id || item._id)}>{deletingDraftId === (item.id || item._id) ? 'Deleting…' : 'Delete'}</button>
                             </div>
@@ -1489,6 +1702,40 @@ export default function App() {
                     </div>
                   ) : (
                     <div className="saved-empty"><span className="empty-state-icon" aria-hidden="true">⌕</span><h3>No saved drafts match your search.</h3><p>Try a different draft name, semester, or status.</p></div>
+                  )}
+                  {historyDraftId && (
+                    <section className="draft-history-panel" aria-labelledby="draft-history-title">
+                      <div className="draft-history-header">
+                        <div><span className="eyebrow">VERSION HISTORY</span><h2 id="draft-history-title">{savedDrafts.find((item) => (item.id || item._id) === historyDraftId)?.name || 'Draft'} history</h2><p>Restoring an earlier version creates a new version and keeps the current one.</p></div>
+                        <button type="button" onClick={() => { setHistoryDraftId(''); setDraftVersions([]) }}>Close</button>
+                      </div>
+                      {versionsLoading ? (
+                        <div className="comparison-loading" role="status"><span className="loading-spinner" aria-hidden="true" /> Loading version history…</div>
+                      ) : draftVersions.length ? (
+                        <div className="draft-version-list">
+                          {draftVersions.map((version) => {
+                            const snapshot = version.snapshot || {}
+                            const currentVersion = Math.max(...draftVersions.map((item) => item.versionNumber || 1))
+                            const isCurrent = (version.versionNumber || 1) === currentVersion
+                            const modified = version.modifiedAtUtc ? new Date(version.modifiedAtUtc) : null
+                            const modifiedLabel = modified && !Number.isNaN(modified.getTime()) ? modified.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'Date unavailable'
+                            const status = snapshot.status || 'Draft'
+                            const versionStatusClass = status.toLowerCase().includes('review') || status.toLowerCase().includes('issue') ? 'saved-status-issues' : status.toLowerCase() === 'valid' ? 'saved-status-valid' : 'saved-status-neutral'
+                            return (
+                              <article className={`draft-version-row${isCurrent ? ' is-current' : ''}`} key={version.versionNumber}>
+                                <div className="draft-version-number"><strong>Version {version.versionNumber || 1}</strong>{isCurrent && <span>Current</span>}</div>
+                                <span className="draft-version-date">Modified {modifiedLabel}</span>
+                                <span className={`saved-status ${versionStatusClass}`}><i aria-hidden="true" />{status}</span>
+                                <span className="draft-version-courses">{snapshot.sections?.length || 0} courses</span>
+                                <button type="button" onClick={() => restoreDraftVersion(historyDraftId, version.versionNumber)} disabled={isCurrent || restoringVersion != null}>
+                                  {restoringVersion === version.versionNumber ? 'Restoring…' : 'Restore version'}
+                                </button>
+                              </article>
+                            )
+                          })}
+                        </div>
+                      ) : <p className="draft-history-empty">No saved versions found.</p>}
+                    </section>
                   )}
                 </>
               ) : draftsLoaded ? (
