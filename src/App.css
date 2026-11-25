@@ -609,6 +609,28 @@ footer span {
   animation: modalAppear 0.2s ease-out;
 }
 
+.confirmation-backdrop { z-index: 1100; }
+.confirmation-modal { width: min(440px, 100%); padding: 26px; border: 1px solid #e1e9ed; border-radius: 17px; background: #fff; box-shadow: 0 24px 80px rgba(0,0,0,.28); animation: modalAppear .2s ease-out; }
+.confirmation-heading { display: flex; align-items: center; gap: 13px; }
+.confirmation-icon { display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; border: 1px solid #dce5e9; border-radius: 13px; background: #f4f8f9; color: #526c7c; font-size: 19px; font-weight: 800; }
+.confirmation-icon svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
+.delete-confirmation .confirmation-icon { border-color: #f0ceca; background: #fff2f0; color: #a33e39; }
+.confirmation-eyebrow { color: #758a96; font-size: 9px; font-weight: 800; letter-spacing: 1.1px; }
+.confirmation-modal h2 { margin: 4px 0 0; color: #17324d; font-size: 21px; letter-spacing: -.3px; }
+.confirmation-modal > p { margin-top: 18px; color: #61798a; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.confirmation-draft-details { display: flex; align-items: center; gap: 11px; margin-top: 17px; padding: 12px; border: 1px solid #e2e9ec; border-radius: 11px; background: #f8fafb; }
+.confirmation-draft-mark { display: grid; place-items: center; flex: 0 0 36px; width: 36px; height: 36px; border-radius: 10px; background: #eaf2f4; color: #176c78; font-size: 17px; }
+.confirmation-draft-details > div { display: grid; gap: 4px; min-width: 0; }
+.confirmation-draft-details strong { overflow-wrap: anywhere; color: #203e53; font-size: 12px; }
+.confirmation-draft-details div span { color: #718696; font-size: 10px; }
+.confirmation-modal > .confirmation-warning { margin-top: 10px; color: #98534c; font-size: 10px; }
+.confirmation-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 23px; padding-top: 16px; border-top: 1px solid #edf1f3; }
+.confirmation-actions button { min-height: 40px; padding-inline: 15px; }
+.confirmation-cancel { border-color: #d7e1e5; background: #fff; color: #526c7c; }
+.confirmation-cancel:hover { border-color: #b8c9d0; background: #f7fafb; }
+.confirmation-destructive { border-color: #a44343; background: #a44343; color: #fff; }
+.confirmation-destructive:hover { border-color: #883535; background: #883535; }
+
 @keyframes modalAppear {
   from {
     opacity: 0;
@@ -811,6 +833,10 @@ footer span {
   .conflict-card .conflict-assignment { align-items: stretch; flex-direction: column; }
   .conflict-assignment button { width: 100%; min-height: 42px; }
   .modal-backdrop { align-items: flex-end; padding: 0; }
+  .confirmation-backdrop { align-items: center; padding: 16px; }
+  .confirmation-modal { padding: 22px; border-radius: 16px; }
+  .confirmation-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .confirmation-actions button { width: 100%; }
   .edit-modal { width: 100%; max-height: 94dvh; border-radius: 18px 18px 0 0; padding-bottom: env(safe-area-inset-bottom, 0px); }
   .edit-modal-header { padding-top: 20px; }
   .edit-modal-header h2 { font-size: 21px; }
@@ -1143,9 +1169,12 @@ footer span { color: #718696; }
 .saved-draft-metrics span { color: #61798a; font-size: 9px; }
 .saved-draft-metrics .no-violations strong { color: #17623e; }
 .saved-draft-metrics .has-violations strong { color: #873838; }
-.saved-open-button { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 42px; margin-top: auto; padding: 10px 12px; border-color: #cbdfe1; background: #f2f8f8; color: #086b79; }
+.saved-card-actions { display: flex; gap: 9px; margin-top: auto; }
+.saved-open-button { display: flex; align-items: center; justify-content: space-between; flex: 1; min-width: 0; min-height: 42px; padding: 10px 12px; border-color: #cbdfe1; background: #f2f8f8; color: #086b79; }
 .saved-open-button:hover:not(:disabled) { border-color: #8dbdc2; background: #e8f4f4; color: #075d68; }
 .saved-open-button span { font-size: 16px; }
+.saved-delete-button { min-height: 42px; border-color: #e5caca; background: #fff7f6; color: #984747; }
+.saved-delete-button:hover:not(:disabled) { border-color: #d6a9a9; background: #fff0ef; color: #843b3b; }
 .saved-empty { display: grid; justify-items: center; gap: 8px; padding: 48px 16px; text-align: center; }
 .saved-empty h3 { color: #29495e; font-size: 14px; }
 .saved-empty p { max-width: 420px; }

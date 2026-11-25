@@ -146,6 +146,8 @@ export default function App() {
   const [draftsLoading, setDraftsLoading] = useState(false);
   const [draftsLoaded, setDraftsLoaded] = useState(false);
   const [editingSection, setEditingSection] = useState(null);
+  const [confirmation, setConfirmation] = useState(null);
+  const [deletingDraftId, setDeletingDraftId] = useState(null);
   const [editingConflicts, setEditingConflicts] = useState([]);
   const [editForm, setEditForm] = useState({
     instructorId: "",
@@ -222,7 +224,10 @@ export default function App() {
       (editForm.day || '') !== (editingSection.day || '') ||
       (editForm.timeBlock || '') !== (editingSection.timeBlock || '')
     )
-    if (changed && !window.confirm('Discard your unsaved assignment changes?')) return
+    if (changed) {
+      setConfirmation({ kind: 'discardEdit' })
+      return
+    }
     setEditingSection(null)
   }
 
@@ -264,6 +269,46 @@ export default function App() {
       setMessage("Saved draft opened.");
     } catch (error) {
       setMessage(`Could not open draft: ${error.message}`);
+    }
+  }
+
+  async function deleteDraft(item) {
+    const id = item.id || item._id
+    if (!id) {
+      toast.error('This draft cannot be deleted because it has no ID.')
+      return
+    }
+    setConfirmation({ kind: 'deleteDraft', item })
+  }
+
+  async function confirmAction() {
+    if (!confirmation) return
+    if (confirmation.kind === 'discardEdit') {
+      setConfirmation(null)
+      setEditingSection(null)
+      return
+    }
+
+    const item = confirmation.item
+    const id = item?.id || item?._id
+    if (!id) return
+    setConfirmation(null)
+    setDeletingDraftId(id)
+    try {
+      await request(`/api/schedules/drafts/${encodeURIComponent(id)}`, { method: 'DELETE' })
+      setSavedDrafts((current) => current.filter((saved) => (saved.id || saved._id) !== id))
+      const openId = draft?.id || draft?._id
+      if (openId === id) {
+        setDraft(null)
+        setSavedDraftId(null)
+        setConflicts([])
+        setValidationStatus('pending')
+      }
+      toast.success('Draft deleted.')
+    } catch (error) {
+      toast.error(`Could not delete draft: ${error.message}`)
+    } finally {
+      setDeletingDraftId(null)
     }
   }
 
@@ -596,6 +641,46 @@ export default function App() {
           },
         }}
       />
+      {confirmation && (
+        <div className="modal-backdrop confirmation-backdrop" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setConfirmation(null)
+        }}>
+          <section className={`confirmation-modal${confirmation.kind === 'deleteDraft' ? ' delete-confirmation' : ''}`} role="alertdialog" aria-modal="true" aria-labelledby="confirmation-title" aria-describedby="confirmation-description">
+            <div className="confirmation-heading">
+              <span className="confirmation-icon" aria-hidden="true">
+                {confirmation.kind === 'deleteDraft' ? (
+                  <svg viewBox="0 0 24 24" focusable="false"><path d="M4 7h16M9 7V4h6v3m3 0-.8 13H6.8L6 7m4 4v5m4-5v5" /></svg>
+                ) : '↶'}
+              </span>
+              <div>
+                <span className="confirmation-eyebrow">{confirmation.kind === 'deleteDraft' ? 'DELETE SAVED DRAFT' : 'UNSAVED ASSIGNMENT'}</span>
+                <h2 id="confirmation-title">{confirmation.kind === 'deleteDraft' ? 'Delete this draft?' : 'Discard unsaved changes?'}</h2>
+              </div>
+            </div>
+            <p id="confirmation-description">
+              {confirmation.kind === 'deleteDraft'
+                ? 'This will permanently remove the saved schedule and its assignments.'
+                : 'Your assignment changes will be lost.'}
+            </p>
+            {confirmation.kind === 'deleteDraft' && (
+              <div className="confirmation-draft-details">
+                <span className="confirmation-draft-mark" aria-hidden="true">▤</span>
+                <div>
+                  <strong>{confirmation.item?.name || 'Untitled schedule draft'}</strong>
+                  <span>{confirmation.item?.semester || 'Semester not specified'}</span>
+                </div>
+              </div>
+            )}
+            {confirmation.kind === 'deleteDraft' && <p className="confirmation-warning">This action can’t be undone.</p>}
+            <div className="confirmation-actions">
+              <button type="button" className="confirmation-cancel" onClick={() => setConfirmation(null)}>Cancel</button>
+              <button type="button" className="confirmation-destructive" onClick={confirmAction}>
+                {confirmation.kind === 'deleteDraft' ? 'Delete draft' : 'Discard changes'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
       <div className="shell">
         <aside className="sidebar">
           <div className="brand">
@@ -1023,9 +1108,15 @@ export default function App() {
               {conflicts.length ? (
                 conflicts.map((item, i) => {
                   const conflict = typeof item === 'string' ? { message: item } : item
-                  const rawAffectedCodes = conflict.affectedCourseCodes || conflict.courseCodes || [conflict.courseCode, conflict.conflictingCourseCode, conflict.relatedCourseCode].filter(Boolean)
-                  const affectedCodes = Array.isArray(rawAffectedCodes) ? rawAffectedCodes : [rawAffectedCodes]
-                  const affectedSections = (draft?.sections || []).filter((section) => affectedCodes.includes(section.courseCode))
+                  const rawAffectedCodes = conflict.affectedCourseCodes?.length
+                    ? conflict.affectedCourseCodes
+                    : (conflict.courseCodes?.length ? conflict.courseCodes : [conflict.courseCode, conflict.conflictingCourseCode, conflict.relatedCourseCode].filter(Boolean))
+                  const affectedCodes = (Array.isArray(rawAffectedCodes) ? rawAffectedCodes : [rawAffectedCodes])
+                    .flatMap((value) => typeof value === 'string' ? value.split(',') : [value])
+                    .map((value) => String(value || '').trim())
+                    .filter(Boolean)
+                  const affectedCodeSet = new Set(affectedCodes.map((code) => code.toLowerCase()))
+                  const affectedSections = (draft?.sections || []).filter((section) => affectedCodeSet.has((section.courseCode || '').toLowerCase()))
                   return (
                     <article className="conflict detailed-conflict conflict-card" key={i} role="alert">
                       <b className="conflict-icon" aria-hidden="true">!</b>
@@ -1118,7 +1209,10 @@ export default function App() {
                               <div className={violationCount ? 'has-violations' : 'no-violations'}><strong>{violationCount}</strong><span>{violationCount === 1 ? 'required violation' : 'required violations'}</span></div>
                               <div><strong>{formattedDate}</strong><span>Saved date</span></div>
                             </div>
-                            <button className="saved-open-button" onClick={() => openDraft(item.id || item._id)} disabled={!item.id && !item._id}>Open draft <span aria-hidden="true">→</span></button>
+                            <div className="saved-card-actions">
+                              <button className="saved-open-button" onClick={() => openDraft(item.id || item._id)} disabled={!item.id && !item._id}>Open draft <span aria-hidden="true">→</span></button>
+                              <button className="saved-delete-button" onClick={() => deleteDraft(item)} disabled={(!item.id && !item._id) || deletingDraftId === (item.id || item._id)}>{deletingDraftId === (item.id || item._id) ? 'Deleting…' : 'Delete'}</button>
+                            </div>
                           </article>
                         )
                       })}
