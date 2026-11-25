@@ -36,6 +36,47 @@ async function request(path, options = {}) {
   return data
 }
 
+function getConflictComparisonKey(item) {
+  const conflict = typeof item === 'string' ? { message: item } : item
+  const rawCourses = conflict.affectedCourseCodes?.length
+    ? conflict.affectedCourseCodes
+    : [conflict.courseCode, conflict.conflictingCourseCode].filter(Boolean)
+  const courseCodes = (Array.isArray(rawCourses) ? rawCourses : [rawCourses])
+    .flatMap((value) => String(value || '').split(','))
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+    .sort()
+  return `${conflict.code || conflict.category || 'conflict'}|${courseCodes.join(',')}|${courseCodes.length ? '' : (conflict.message || '').toLowerCase()}`
+}
+
+function compareDraftAssignments(draftA, draftB) {
+  const sectionsA = new Map((draftA.sections || []).map((section) => [section.courseCode.toLowerCase(), section]))
+  const sectionsB = new Map((draftB.sections || []).map((section) => [section.courseCode.toLowerCase(), section]))
+  const changes = []
+
+  for (const [courseKey, sectionA] of sectionsA) {
+    const sectionB = sectionsB.get(courseKey)
+    if (!sectionB) {
+      changes.push({ courseCode: sectionA.courseCode, type: 'Course removed', from: 'Included in Draft A', to: 'Not in Draft B' })
+      continue
+    }
+    const timeA = `${sectionA.day || 'Unassigned'} · ${sectionA.timeBlock || 'Unassigned'}`
+    const timeB = `${sectionB.day || 'Unassigned'} · ${sectionB.timeBlock || 'Unassigned'}`
+    if (timeA !== timeB) changes.push({ courseCode: sectionA.courseCode, type: 'Course time changed', from: timeA, to: timeB })
+    const instructorA = sectionA.instructorId || sectionA.instructorName || 'Unassigned'
+    const instructorB = sectionB.instructorId || sectionB.instructorName || 'Unassigned'
+    if (instructorA !== instructorB) changes.push({ courseCode: sectionA.courseCode, type: 'Instructor changed', from: sectionA.instructorName || 'Unassigned', to: sectionB.instructorName || 'Unassigned' })
+    const roomA = sectionA.roomId || sectionA.roomNumber || 'Unassigned'
+    const roomB = sectionB.roomId || sectionB.roomNumber || 'Unassigned'
+    if (roomA !== roomB) changes.push({ courseCode: sectionA.courseCode, type: 'Room changed', from: sectionA.roomNumber || 'Unassigned', to: sectionB.roomNumber || 'Unassigned' })
+  }
+
+  for (const [courseKey, sectionB] of sectionsB) {
+    if (!sectionsA.has(courseKey)) changes.push({ courseCode: sectionB.courseCode, type: 'Course added', from: 'Not in Draft A', to: 'Included in Draft B' })
+  }
+  return changes
+}
+
 function Stat({ label, value, danger }) {
   return (
     <div className="stat">
@@ -144,11 +185,16 @@ export default function App() {
   const [connected, setConnected] = useState(false);
   const [planningTab, setPlanningTab] = useState("offerings");
   const [savedDrafts, setSavedDrafts] = useState([]);
+  const [compareDraftAId, setCompareDraftAId] = useState('');
+  const [compareDraftBId, setCompareDraftBId] = useState('');
+  const [draftComparison, setDraftComparison] = useState(null);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
   const [draftsLoading, setDraftsLoading] = useState(false);
   const [draftsLoaded, setDraftsLoaded] = useState(false);
   const [editingSection, setEditingSection] = useState(null);
   const [confirmation, setConfirmation] = useState(null);
   const [deletingDraftId, setDeletingDraftId] = useState(null);
+  const [duplicatingDraftId, setDuplicatingDraftId] = useState(null);
   const [editingConflicts, setEditingConflicts] = useState([]);
   const [editForm, setEditForm] = useState({
     instructorId: "",
@@ -204,6 +250,16 @@ export default function App() {
   useEffect(() => {
     loadWorkspace();
   }, [semester]);
+
+  useEffect(() => {
+    if (!draft || savedDraftId) return undefined
+    const warnBeforeUnload = (event) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warnBeforeUnload)
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload)
+  }, [draft, savedDraftId])
 
   async function loadDrafts() {
     setDraftsLoading(true)
@@ -282,6 +338,59 @@ export default function App() {
     setConfirmation({ kind: 'deleteDraft', item })
   }
 
+  async function duplicateDraft(item) {
+    const id = item.id || item._id
+    if (!id) {
+      toast.error('This draft cannot be duplicated because it has no ID.')
+      return
+    }
+    setDuplicatingDraftId(id)
+    try {
+      const duplicate = await request(`/api/schedules/drafts/${encodeURIComponent(id)}/duplicate`, { method: 'POST' })
+      setSavedDrafts((current) => [duplicate, ...current])
+      toast.success('Draft duplicated.')
+    } catch (error) {
+      toast.error(`Could not duplicate draft: ${error.message}`)
+    } finally {
+      setDuplicatingDraftId(null)
+    }
+  }
+
+  async function compareDrafts() {
+    if (!compareDraftAId || !compareDraftBId || compareDraftAId === compareDraftBId) {
+      toast.error('Choose two different saved drafts to compare.')
+      return
+    }
+    setComparisonLoading(true)
+    setDraftComparison(null)
+    try {
+      const [draftA, draftB] = await Promise.all([
+        request(`/api/schedules/drafts/${encodeURIComponent(compareDraftAId)}`),
+        request(`/api/schedules/drafts/${encodeURIComponent(compareDraftBId)}`),
+      ])
+      const [validationA, validationB] = await Promise.all([
+        request('/api/schedules/validate', { method: 'POST', body: JSON.stringify({ draft: draftA }) }),
+        request('/api/schedules/validate', { method: 'POST', body: JSON.stringify({ draft: draftB }) }),
+      ])
+      const conflictsA = validationA.errors || []
+      const conflictsB = validationB.errors || []
+      const keysA = new Set(conflictsA.map(getConflictComparisonKey))
+      const keysB = new Set(conflictsB.map(getConflictComparisonKey))
+      setDraftComparison({
+        draftA,
+        draftB,
+        assignmentChanges: compareDraftAssignments(draftA, draftB),
+        addedConflicts: conflictsB.filter((item) => !keysA.has(getConflictComparisonKey(item))),
+        resolvedConflicts: conflictsA.filter((item) => !keysB.has(getConflictComparisonKey(item))),
+      })
+      toast.success('Draft comparison is ready.')
+    } catch (error) {
+      toast.error(`Could not compare drafts: ${error.message}`)
+    } finally {
+      setComparisonLoading(false)
+    }
+  }
+
   async function confirmAction() {
     if (!confirmation) return
     if (confirmation.kind === 'discardEdit') {
@@ -298,6 +407,9 @@ export default function App() {
     try {
       await request(`/api/schedules/drafts/${encodeURIComponent(id)}`, { method: 'DELETE' })
       setSavedDrafts((current) => current.filter((saved) => (saved.id || saved._id) !== id))
+      if (compareDraftAId === id) setCompareDraftAId('')
+      if (compareDraftBId === id) setCompareDraftBId('')
+      if (compareDraftAId === id || compareDraftBId === id) setDraftComparison(null)
       const openId = draft?.id || draft?._id
       if (openId === id) {
         setDraft(null)
@@ -580,7 +692,7 @@ export default function App() {
 
               {workspace.rooms.map((item) => (
                 <option value={item.id} key={item.id}>
-                  {item.roomNumber} · Capacity {item.capacity}
+                  {item.roomNumber} · {item.roomType || 'Room'} · Capacity {item.capacity}{item.equipment?.length ? ` · ${item.equipment.join(', ')}` : ''}
                 </option>
               ))}
             </select>
@@ -1092,7 +1204,20 @@ export default function App() {
               <div className="panel-title">
                 <div>
                   <span className="eyebrow">SCHEDULE BUILDER · {semester.toUpperCase()}</span>
-                  <h2>{draft?.name || "Schedule draft"}</h2>
+                  <label className="draft-name-field">Draft name
+                    <input
+                      value={draft?.name || ''}
+                      onChange={(event) => {
+                        setDraft((current) => current ? { ...current, name: event.target.value } : current)
+                        setSavedDraftId(null)
+                      }}
+                      aria-label="Draft name"
+                      maxLength={120}
+                    />
+                  </label>
+                  <p className={`draft-save-state${savedDraftId ? ' is-saved' : ''}`} role="status">
+                    {savedDraftId ? 'All changes saved.' : 'Unsaved changes — save this draft to keep your latest version.'}
+                  </p>
                   <p>Review the weekly layout. Select any course card to edit its assignment.</p>
                 </div>
                 <div className="schedule-actions">
@@ -1268,6 +1393,69 @@ export default function App() {
               ) : savedDrafts.length ? (
                 <>
                   <label className="saved-search"><span aria-hidden="true">⌕</span><input aria-label="Search saved drafts" placeholder="Search by draft name, semester, or status" value={savedDraftSearch} onChange={(event) => setSavedDraftSearch(event.target.value)} /></label>
+                  <section className="draft-comparison-panel" aria-labelledby="draft-comparison-title">
+                    <div className="draft-comparison-heading">
+                      <div>
+                        <span className="eyebrow">VERSION REVIEW</span>
+                        <h2 id="draft-comparison-title">Compare drafts</h2>
+                        <p>Review assignment changes and conflicts using the current enabled rules.</p>
+                      </div>
+                    </div>
+                    <div className="draft-comparison-controls">
+                      <label>Draft A
+                        <select value={compareDraftAId} onChange={(event) => { setCompareDraftAId(event.target.value); setDraftComparison(null) }}>
+                          <option value="">Select a saved draft</option>
+                          {savedDrafts.map((item) => <option key={item.id || item._id} value={item.id || item._id}>{item.name || 'Untitled draft'} · {item.semester || 'Semester not specified'}</option>)}
+                        </select>
+                      </label>
+                      <span className="comparison-versus" aria-hidden="true">vs</span>
+                      <label>Draft B
+                        <select value={compareDraftBId} onChange={(event) => { setCompareDraftBId(event.target.value); setDraftComparison(null) }}>
+                          <option value="">Select a saved draft</option>
+                          {savedDrafts.map((item) => <option key={item.id || item._id} value={item.id || item._id}>{item.name || 'Untitled draft'} · {item.semester || 'Semester not specified'}</option>)}
+                        </select>
+                      </label>
+                      <button className="primary" type="button" onClick={compareDrafts} disabled={comparisonLoading || !compareDraftAId || !compareDraftBId || compareDraftAId === compareDraftBId}>
+                        {comparisonLoading ? 'Comparing…' : 'Compare drafts'}
+                      </button>
+                    </div>
+                    {comparisonLoading ? (
+                      <div className="comparison-loading" role="status"><span className="loading-spinner" aria-hidden="true" /> Comparing assignments and validating conflicts…</div>
+                    ) : draftComparison && (
+                      <div className="draft-comparison-results" aria-live="polite">
+                        <div className="comparison-result-heading">
+                          <strong>{draftComparison.draftA.name} <span>→</span> {draftComparison.draftB.name}</strong>
+                          <span>{draftComparison.assignmentChanges.length} assignment change(s)</span>
+                        </div>
+                        {draftComparison.assignmentChanges.length ? (
+                          <div className="comparison-changes">
+                            {draftComparison.assignmentChanges.map((change, index) => (
+                              <article className="comparison-change" key={`${change.courseCode}-${change.type}-${index}`}>
+                                <div><span className="comparison-course">{change.courseCode}</span><strong>{change.type}</strong></div>
+                                <p><span>{change.from}</span><b aria-hidden="true">→</b><span>{change.to}</span></p>
+                              </article>
+                            ))}
+                          </div>
+                        ) : <p className="comparison-no-changes">No course assignments changed between these drafts.</p>}
+                        <div className="comparison-conflict-columns">
+                          <section className="comparison-conflict-group added-conflicts">
+                            <h3>New conflicts <span>{draftComparison.addedConflicts.length}</span></h3>
+                            {draftComparison.addedConflicts.length ? draftComparison.addedConflicts.map((item, index) => {
+                              const conflict = typeof item === 'string' ? { message: item } : item
+                              return <article key={`${getConflictComparisonKey(item)}-${index}`}><strong>{conflict.category || conflict.code || 'Scheduling conflict'}</strong><p>{conflict.message || 'A conflict appears in Draft B.'}</p></article>
+                            }) : <p className="comparison-conflict-empty">No new conflicts.</p>}
+                          </section>
+                          <section className="comparison-conflict-group resolved-conflicts">
+                            <h3>Conflicts resolved <span>{draftComparison.resolvedConflicts.length}</span></h3>
+                            {draftComparison.resolvedConflicts.length ? draftComparison.resolvedConflicts.map((item, index) => {
+                              const conflict = typeof item === 'string' ? { message: item } : item
+                              return <article key={`${getConflictComparisonKey(item)}-${index}`}><strong>{conflict.category || conflict.code || 'Scheduling conflict'}</strong><p>{conflict.message || 'A conflict from Draft A is resolved in Draft B.'}</p></article>
+                            }) : <p className="comparison-conflict-empty">No conflicts resolved.</p>}
+                          </section>
+                        </div>
+                      </div>
+                    )}
+                  </section>
                   {filteredSavedDrafts.length ? (
                     <div className="saved-draft-grid">
                       {filteredSavedDrafts.map((item) => {
@@ -1275,8 +1463,9 @@ export default function App() {
                         const normalizedStatus = String(item.status || 'Draft').toLowerCase()
                         const statusLabel = item.status || 'Draft'
                         const statusClass = normalizedStatus.includes('invalid') || normalizedStatus.includes('conflict') || normalizedStatus.includes('issue') ? 'saved-status-issues' : normalizedStatus === 'valid' || normalizedStatus.includes('validated') || normalizedStatus === 'ready' ? 'saved-status-valid' : 'saved-status-neutral'
-                        const createdDate = item.createdAtUtc ? new Date(item.createdAtUtc) : null
-                        const formattedDate = createdDate && !Number.isNaN(createdDate.getTime()) ? createdDate.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'Date unavailable'
+                        const modifiedDate = item.lastModifiedAtUtc || item.createdAtUtc
+                        const parsedModifiedDate = modifiedDate ? new Date(modifiedDate) : null
+                        const formattedModifiedDate = parsedModifiedDate && !Number.isNaN(parsedModifiedDate.getTime()) ? parsedModifiedDate.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'Date unavailable'
                         return (
                           <article className="saved-draft-card" key={item.id || item._id}>
                             <div className="saved-draft-topline">
@@ -1287,10 +1476,11 @@ export default function App() {
                             <span className="saved-semester">{item.semester || 'Semester not specified'}</span>
                             <div className="saved-draft-metrics">
                               <div className={violationCount ? 'has-violations' : 'no-violations'}><strong>{violationCount}</strong><span>{violationCount === 1 ? 'required violation' : 'required violations'}</span></div>
-                              <div><strong>{formattedDate}</strong><span>Saved date</span></div>
+                              <div><strong>{formattedModifiedDate}</strong><span>Last modified</span></div>
                             </div>
                             <div className="saved-card-actions">
                               <button className="saved-open-button" onClick={() => openDraft(item.id || item._id)} disabled={!item.id && !item._id}>Open draft <span aria-hidden="true">→</span></button>
+                              <button className="saved-duplicate-button" onClick={() => duplicateDraft(item)} disabled={(!item.id && !item._id) || duplicatingDraftId === (item.id || item._id)}>{duplicatingDraftId === (item.id || item._id) ? 'Copying…' : 'Duplicate'}</button>
                               <button className="saved-delete-button" onClick={() => deleteDraft(item)} disabled={(!item.id && !item._id) || deletingDraftId === (item.id || item._id)}>{deletingDraftId === (item.id || item._id) ? 'Deleting…' : 'Delete'}</button>
                             </div>
                           </article>
